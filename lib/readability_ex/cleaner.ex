@@ -739,9 +739,19 @@ defmodule ReadabilityEx.Cleaner do
     |> Enum.find(&Regex.match?(Constants.urlish_image_re(), &1))
   end
 
-  def clean_conditionally(node) do
-    # Applied to subtree (div, ul, table, etc.) based on shadiness metrics.
-    Floki.traverse_and_update(node, fn
+  def clean_conditionally({tag, attrs, children}) do
+    # Apply to subtree; keep the root container intact.
+    {tag, attrs, clean_conditionally_children(children)}
+  end
+
+  def clean_conditionally(children) when is_list(children) do
+    clean_conditionally_children(children)
+  end
+
+  def clean_conditionally(other), do: other
+
+  defp clean_conditionally_children(children) do
+    Floki.traverse_and_update(children, fn
       {tag, attrs, children} = n when tag in ["div", "section", "ul", "ol", "table", "form"] ->
         cond do
           tag == "table" and data_table_attr?(attrs) ->
@@ -1561,8 +1571,14 @@ defmodule ReadabilityEx.Cleaner do
       {"a", attrs, children} ->
         href = attr(attrs, "href") |> String.trim()
 
-        if href == "" or String.match?(href, ~r/^javascript:/i) do
-          {"span", [], children}
+        if String.match?(href, ~r/^javascript:/i) do
+          case children do
+            [text] when is_binary(text) ->
+              text
+
+            _ ->
+              {"span", [], children}
+          end
         else
           {"a", attrs, children}
         end

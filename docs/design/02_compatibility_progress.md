@@ -150,6 +150,9 @@ areas, what is already aligned, and where gaps remain.
 - Single-cell tables (flatten)
   - Status: Matched
 
+- JavaScript link conversion
+  - Status: Matched
+
 ## Metadata
 
 - _getJSONLD (context/type validation, name/headline similarity)
@@ -177,7 +180,6 @@ areas, what is already aligned, and where gaps remain.
 
 ## High-impact Gaps (likely to affect fixtures)
 
-1. JavaScript link conversion (text vs span handling).
-2. JSON-LD context/type validation and expanded types.
-3. Named HTML entity decoding.
-4. Paging / multi-page support.
+1. JSON-LD context/type validation and expanded types.
+2. Named HTML entity decoding.
+3. Paging / multi-page support.
