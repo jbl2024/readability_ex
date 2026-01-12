@@ -2,7 +2,7 @@ defmodule ReadabilityEx.Title do
   @moduledoc false
 
   # Common separators similar to Readability.js behavior
-  @seps ~r/\s[\|\-»:\u2013\u2014]\s|[\|\-»:\u2013\u2014]/
+  @seps ~r/\s[|\-»:–—]\s|[|\-»:–—]/
 
   def get_article_title(doc, meta, _opts) do
     meta_title = meta.title |> blank()

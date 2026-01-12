@@ -33,7 +33,15 @@ defmodule ReadabilityEx do
     attempts = [
       run_attempt(state, doc, meta, title, base_uri, Constants.flag_all(), opts),
       run_attempt(state, doc, meta, title, base_uri, Constants.flag_no_strip_unlikelys(), opts),
-      run_attempt(state, doc, meta, title, base_uri, Constants.flag_only_clean_conditionally(), opts),
+      run_attempt(
+        state,
+        doc,
+        meta,
+        title,
+        base_uri,
+        Constants.flag_only_clean_conditionally(),
+        opts
+      ),
       run_attempt(state, doc, meta, title, base_uri, 0, opts)
     ]
 

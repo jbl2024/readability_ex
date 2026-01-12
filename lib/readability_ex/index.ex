@@ -1,7 +1,7 @@
 defmodule ReadabilityEx.Index do
   @moduledoc false
 
-  alias ReadabilityEx.{Constants, Metrics}
+  alias ReadabilityEx.Metrics
 
   defmodule Node do
     @moduledoc false
@@ -41,6 +41,12 @@ defmodule ReadabilityEx.Index do
     end)
     |> then(fn {ids, st} -> {Enum.reverse(ids), st} end)
   end
+
+  # Ignore comments
+  defp walk({:comment, _}, _parent_id, state, acc), do: {state, acc}
+
+  # Ignore doctype
+  defp walk({:doctype, _}, _parent_id, state, acc), do: {state, acc}
 
   defp walk(text, _parent_id, state, _acc) when is_binary(text), do: {nil, state}
 

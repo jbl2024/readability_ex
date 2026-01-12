@@ -2,12 +2,12 @@ defmodule ReadabilityEx.Metadata do
   @moduledoc false
 
   @jsonld_types MapSet.new([
-                 "Article",
-                 "NewsArticle",
-                 "BlogPosting",
-                 "Report",
-                 "ScholarlyArticle"
-               ])
+                  "Article",
+                  "NewsArticle",
+                  "BlogPosting",
+                  "Report",
+                  "ScholarlyArticle"
+                ])
 
   def extract(doc, raw_html) do
     jsonld = get_jsonld(raw_html)
@@ -32,6 +32,7 @@ defmodule ReadabilityEx.Metadata do
 
   defp crawl_dir(id, state) do
     n = state[id]
+
     if n.dir && n.dir != "" do
       n.dir
     else
@@ -46,8 +47,8 @@ defmodule ReadabilityEx.Metadata do
       author: meta_content(doc, ["author", "parsely-author", "article:author"]),
       site_name: meta_content(doc, ["og:site_name"]),
       published_time: meta_content(doc, ["article:published_time", "og:published_time"]),
-      lang: (Floki.attribute(doc, "html", "lang") |> List.first() |> blank_to_nil()),
-      dir: (Floki.attribute(doc, "html", "dir") |> List.first() |> blank_to_nil())
+      lang: Floki.attribute(doc, "html", "lang") |> List.first() |> blank_to_nil(),
+      dir: Floki.attribute(doc, "html", "dir") |> List.first() |> blank_to_nil()
     }
   end
 
@@ -65,7 +66,10 @@ defmodule ReadabilityEx.Metadata do
   defp get_jsonld(raw_html) do
     # Parse <script type="application/ld+json"> blocks from raw HTML (safer than after removal).
     blocks =
-      Regex.scan(~r/<script[^>]*type=["']application\/ld\+json["'][^>]*>(.*?)<\/script>/is, raw_html)
+      Regex.scan(
+        ~r/<script[^>]*type=["']application\/ld\+json["'][^>]*>(.*?)<\/script>/is,
+        raw_html
+      )
       |> Enum.map(fn [_, body] -> body end)
 
     blocks
@@ -116,17 +120,22 @@ defmodule ReadabilityEx.Metadata do
 
   defp extract_author(nil), do: nil
   defp extract_author(%{"name" => n}), do: blank_to_nil(n)
-  defp extract_author(list) when is_list(list), do: list |> Enum.map(&extract_author/1) |> Enum.find(& &1)
+
+  defp extract_author(list) when is_list(list),
+    do: list |> Enum.map(&extract_author/1) |> Enum.find(& &1)
+
   defp extract_author(n) when is_binary(n), do: blank_to_nil(n)
   defp extract_author(_), do: nil
 
   defp pick_best_jsonld([]), do: %{}
   defp pick_best_jsonld([one]), do: one
+
   defp pick_best_jsonld(list) do
     Enum.find(list, &(&1[:title] && &1[:published_time])) || hd(list)
   end
 
   defp blank_to_nil(nil), do: nil
+
   defp blank_to_nil(s) when is_binary(s) do
     s = String.trim(s)
     if s == "", do: nil, else: s

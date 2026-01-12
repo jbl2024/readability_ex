@@ -6,7 +6,9 @@ defmodule ReadabilityEx.Constants do
   @flag_weight_classes 0x2
   @flag_clean_conditionally 0x4
 
-  def flag_all(), do: bor(@flag_strip_unlikelys, bor(@flag_weight_classes, @flag_clean_conditionally))
+  def flag_all(),
+    do: bor(@flag_strip_unlikelys, bor(@flag_weight_classes, @flag_clean_conditionally))
+
   def flag_no_strip_unlikelys(), do: bor(@flag_weight_classes, @flag_clean_conditionally)
   def flag_only_clean_conditionally(), do: @flag_clean_conditionally
 
@@ -40,14 +42,25 @@ defmodule ReadabilityEx.Constants do
   end
 
   # Regexes (align with your spec; you can pin exact Mozilla regex set per commit if needed)
-  def re_positive(), do: ~r/article|body|content|entry|hentry|main|page|pagination|post|text|blog|story/i
-  def re_negative(), do: ~r/-ad-|adbox|advert|banner|combx|comment|com-|contact|footer|gdpr|masthead|modal|nav|newsletter|promo|related|scroll|share|sidebar|sponsor|tag|tool|widget/i
-  def re_unlikely(), do: ~r/combx|comment|community|disqus|extra|foot|header|menu|modal|nav|remark|rss|shoutbox|sidebar|sponsor|shopping|tags|tool|widget/i
-  def re_ok_maybe(), do: ~r/article|body|content|entry|hentry|main|page|pagination|post|text|blog|story/i
+  def re_positive(),
+    do: ~r/article|body|content|entry|hentry|main|page|pagination|post|text|blog|story/i
+
+  def re_negative(),
+    do:
+      ~r/-ad-|adbox|advert|banner|combx|comment|com-|contact|footer|gdpr|masthead|modal|nav|newsletter|promo|related|scroll|share|sidebar|sponsor|tag|tool|widget/i
+
+  def re_unlikely(),
+    do:
+      ~r/combx|comment|community|disqus|extra|foot|header|menu|modal|nav|remark|rss|shoutbox|sidebar|sponsor|shopping|tags|tool|widget/i
+
+  def re_ok_maybe(),
+    do: ~r/article|body|content|entry|hentry|main|page|pagination|post|text|blog|story/i
+
   def re_byline(), do: ~r/byline|author|dateline|writtenby|p-author/i
 
   def re_commas() do
-    ~r/\u002C|\u060C|\uFE50|\uFE10|\uFE11|\u2E41|\u2E34|\u2E32|\uFF0C/
+    # All common comma-like characters used by Readability.js
+    ~r/[,،﹐︐︑⸁⸴⸲，]/
   end
 
   def re_ad_words() do

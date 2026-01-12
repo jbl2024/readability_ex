@@ -9,7 +9,7 @@ defmodule ReadabilityEx.Cleaner do
     # - if <noscript> contains exactly one <img> and previous sibling is placeholder <img>,
     #   replace placeholder with that img, merge attributes.
     Floki.traverse_and_update(doc, fn
-      {"noscript", _attrs, children} = ns ->
+      {"noscript", _attrs, _children} = ns ->
         imgs = Floki.find(ns, "img")
 
         case imgs do
@@ -128,7 +128,7 @@ defmodule ReadabilityEx.Cleaner do
 
   defp tokens_to_paragraph_nodes(tokens) do
     # Break on consecutive BR
-    {paras, current, last_br?} =
+    {paras, current, _last_br?} =
       Enum.reduce(tokens, {[], [], false}, fn t, {ps, cur, last_br} ->
         case t do
           {:br} ->
@@ -196,17 +196,26 @@ defmodule ReadabilityEx.Cleaner do
     src = attr(attrs, "src")
     srcset = attr(attrs, "srcset")
 
-    {attrs, src} =
+    {attrs, _src} =
       if src == "" or tiny_data_uri?(src) do
         lazy = Enum.find(Constants.lazy_src_attrs(), fn k -> attr(attrs, k) != "" end)
-        if lazy, do: {List.keystore(attrs, "src", 0, {"src", attr(attrs, lazy)}), attr(attrs, lazy)}, else: {attrs, src}
+
+        if lazy,
+          do: {List.keystore(attrs, "src", 0, {"src", attr(attrs, lazy)}), attr(attrs, lazy)},
+          else: {attrs, src}
       else
         {attrs, src}
       end
 
     if srcset == "" do
-      lazyset = Enum.find(["data-srcset", "data-lazy-srcset", "data-src-set"], fn k -> attr(attrs, k) != "" end)
-      if lazyset, do: List.keystore(attrs, "srcset", 0, {"srcset", attr(attrs, lazyset)}), else: attrs
+      lazyset =
+        Enum.find(["data-srcset", "data-lazy-srcset", "data-src-set"], fn k ->
+          attr(attrs, k) != ""
+        end)
+
+      if lazyset,
+        do: List.keystore(attrs, "srcset", 0, {"srcset", attr(attrs, lazyset)}),
+        else: attrs
     else
       attrs
     end
@@ -217,7 +226,9 @@ defmodule ReadabilityEx.Cleaner do
 
     if tiny_data_uri?(src) do
       # If any other attr looks like a real image url, drop src and let promoted attr win
-      if Enum.any?(attrs, fn {k, v} -> k != "src" and Regex.match?(Constants.urlish_image_re(), v) end) do
+      if Enum.any?(attrs, fn {k, v} ->
+           k != "src" and Regex.match?(Constants.urlish_image_re(), v)
+         end) do
         List.keydelete(attrs, "src", 0)
       else
         attrs
@@ -299,6 +310,7 @@ defmodule ReadabilityEx.Cleaner do
     Floki.traverse_and_update(node, fn
       {tag, attrs, children} = n when tag in ["div", "section"] ->
         meaningful_text? = String.trim(Floki.text(n)) != ""
+
         child_structural =
           children
           |> Enum.filter(&match?({_, _, _}, &1))

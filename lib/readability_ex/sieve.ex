@@ -5,7 +5,7 @@ defmodule ReadabilityEx.Sieve do
 
   @spec grab_article(map(), Floki.html_tree(), integer(), binary(), keyword()) ::
           {:ok, map()} | {:error, atom()}
-  def grab_article(state, doc, flags, base_uri, opts) do
+  def grab_article(state, _doc, flags, base_uri, opts) do
     state =
       state
       |> drop_hidden()
@@ -17,7 +17,9 @@ defmodule ReadabilityEx.Sieve do
     {top_id, state} = pick_top_candidate(state)
 
     cond do
-      is_nil(top_id) -> {:error, :no_candidate}
+      is_nil(top_id) ->
+        {:error, :no_candidate}
+
       true ->
         top_id = promote_common_ancestor(top_id, state)
         article_node = build_article_node(top_id, state, flags)
@@ -141,7 +143,9 @@ defmodule ReadabilityEx.Sieve do
 
     alts =
       state
-      |> Enum.filter(fn {id, n} -> id != top_id and n.is_candidate and n.score / top_score >= 0.75 end)
+      |> Enum.filter(fn {id, n} ->
+        id != top_id and n.is_candidate and n.score / top_score >= 0.75
+      end)
       |> Enum.map(fn {id, _} -> id end)
 
     if length(alts) < 3 do
@@ -169,13 +173,17 @@ defmodule ReadabilityEx.Sieve do
   end
 
   defp ancestor_chain(id, state) do
-    Enum.reduce_while(Stream.iterate(id, fn x -> state[x] && state[x].parent_id end), MapSet.new(), fn x, acc ->
-      if is_nil(x) do
-        {:halt, acc}
-      else
-        {:cont, MapSet.put(acc, x)}
+    Enum.reduce_while(
+      Stream.iterate(id, fn x -> state[x] && state[x].parent_id end),
+      MapSet.new(),
+      fn x, acc ->
+        if is_nil(x) do
+          {:halt, acc}
+        else
+          {:cont, MapSet.put(acc, x)}
+        end
       end
-    end)
+    )
   end
 
   defp depth_from(child, ancestor, state) do
@@ -186,7 +194,7 @@ defmodule ReadabilityEx.Sieve do
   defp do_depth(a, a, _s, d), do: d
   defp do_depth(c, a, s, d), do: do_depth(s[c] && s[c].parent_id, a, s, d + 1)
 
-  defp build_article_node(top_id, state, flags) do
+  defp build_article_node(top_id, state, _flags) do
     top = state[top_id]
     siblings = siblings_of(top_id, state)
 
@@ -197,11 +205,21 @@ defmodule ReadabilityEx.Sieve do
       siblings
       |> Enum.filter(fn sib ->
         cond do
-          sib.id == top_id -> true
-          sib.score >= threshold -> true
-          same_class?(sib, top) -> true
-          sib.tag == "p" and String.length(sib.text || "") > 80 and (sib.link_density || 0.0) < 0.25 -> true
-          true -> false
+          sib.id == top_id ->
+            true
+
+          sib.score >= threshold ->
+            true
+
+          same_class?(sib, top) ->
+            true
+
+          sib.tag == "p" and String.length(sib.text || "") > 80 and
+              (sib.link_density || 0.0) < 0.25 ->
+            true
+
+          true ->
+            false
         end
       end)
       |> Enum.map(& &1.raw)
@@ -239,6 +257,7 @@ defmodule ReadabilityEx.Sieve do
     |> Enum.map(&state[&1])
     |> Enum.find_value(fn n ->
       s = (n.class || "") <> " " <> (n.id_attr || "")
+
       if Regex.match?(Constants.re_byline(), s) and String.length(n.text || "") in 3..120 do
         String.trim(n.text)
       else
