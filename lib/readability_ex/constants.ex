@@ -50,7 +50,7 @@ defmodule ReadabilityEx.Constants do
 
   def re_negative(),
     do:
-      ~r/-ad-|adbox|advert|banner|combx|comment|com-|contact|footer|gdpr|masthead|modal|nav|newsletter|promo|related|scroll|share|sidebar|sponsor|tag|tool|widget/i
+      ~r/-ad-|adbox|advert|banner|combx|comment|com-|contact|footer|gdpr|masthead|modal|nav|newsletter|promo|related|scroll|share|sidebar|sponsor|tag|tool|twitter|widget/i
 
   def re_unlikely(),
     do:

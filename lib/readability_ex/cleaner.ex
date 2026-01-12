@@ -205,6 +205,7 @@ defmodule ReadabilityEx.Cleaner do
                 "article",
                 "pre",
                 "blockquote",
+                "figure",
                 "ul",
                 "ol",
                 "table",
@@ -396,6 +397,23 @@ defmodule ReadabilityEx.Cleaner do
     end)
   end
 
+  def remove_unlikely_nodes(node) do
+    Floki.traverse_and_update(node, fn
+      {tag, attrs, children} ->
+        s = attr(attrs, "class") <> " " <> attr(attrs, "id")
+
+        if s != "" and Regex.match?(Constants.re_unlikely(), s) and
+             not Regex.match?(Constants.re_ok_maybe(), s) do
+          nil
+        else
+          {tag, attrs, children}
+        end
+
+      other ->
+        other
+    end)
+  end
+
   def downgrade_h1(node) do
     Floki.traverse_and_update(node, fn
       {"h1", attrs, children} -> {"h2", attrs, children}
@@ -499,24 +517,75 @@ defmodule ReadabilityEx.Cleaner do
 
   def simplify_nested_elements(node) do
     Floki.traverse_and_update(node, fn
-      {tag, attrs, children} = n when tag in ["div", "section"] ->
-        meaningful_text? = String.trim(Floki.text(n)) != ""
+      {tag, attrs, children} when tag in ["div", "section"] ->
+        if redundant_div_with_p?(tag, attrs, children) do
+          List.first(children)
+        else
+        meaningful_text? = direct_text?(children)
+        preserve_wrapper? = preserve_wrapper?(attrs)
 
         child_structural =
           children
           |> Enum.filter(&match?({_, _, _}, &1))
           |> Enum.filter(fn {ctag, _, _} -> String.downcase(ctag) in ["div", "section"] end)
 
-        if not meaningful_text? and length(child_structural) == 1 and length(children) == 1 do
+        if not preserve_wrapper? and not meaningful_text? and length(child_structural) == 1 and
+             only_whitespace_text?(children) do
           {ctag, cattrs, cchildren} = hd(child_structural)
           merged_attrs = merge_attrs(cattrs, attrs)
           {ctag, merged_attrs, cchildren}
         else
           {tag, attrs, children}
         end
+        end
 
       other ->
         other
+    end)
+  end
+
+  defp direct_text?(children) when is_list(children) do
+    Enum.any?(children, fn
+      s when is_binary(s) -> String.trim(s) != ""
+      _ -> false
+    end)
+  end
+
+  defp direct_text?(_), do: false
+
+  defp only_whitespace_text?(children) when is_list(children) do
+    element_count =
+      Enum.count(children, fn
+        {_, _, _} -> true
+        _ -> false
+      end)
+
+    text_ok? =
+      Enum.all?(children, fn
+        s when is_binary(s) -> String.trim(s) == ""
+        _ -> true
+      end)
+
+    element_count == 1 and text_ok?
+  end
+
+  defp only_whitespace_text?(_), do: false
+
+  defp preserve_wrapper?(attrs) do
+    id_attr = attr(attrs, "id")
+    class_attr = attr(attrs, "class")
+
+    id_attr == "readability-page-1" or
+      String.split(class_attr, ~r/\s+/, trim: true) |> Enum.any?(&(&1 == "page"))
+  end
+
+  defp redundant_div_with_p?(tag, attrs, children) do
+    tag == "div" and match?([{"p", _, _}], children) and attrs_removable?(attrs)
+  end
+
+  defp attrs_removable?(attrs) do
+    Enum.all?(attrs, fn {k, _v} ->
+      String.starts_with?(k, "data-") or String.starts_with?(k, "aria-") or k in ["role"]
     end)
   end
 
@@ -595,14 +664,10 @@ defmodule ReadabilityEx.Cleaner do
     if text != "" do
       false
     else
-      has_media =
-        Enum.any?(children, fn
-          {ctag, _, _} ->
-            String.downcase(ctag) in ["img", "video", "audio", "svg", "iframe", "object", "embed"]
+      node = {tag, [], children}
 
-          _ ->
-            false
-        end)
+      has_media =
+        Floki.find(node, "img,video,audio,svg,iframe,object,embed") != []
 
       if has_media do
         false

@@ -31,12 +31,16 @@ defmodule ReadabilityEx.Metadata do
   defp crawl_dir(nil, _), do: nil
 
   defp crawl_dir(id, state) do
-    n = state[id]
+    case state[id] do
+      nil ->
+        nil
 
-    if n.dir && n.dir != "" do
-      n.dir
-    else
-      crawl_dir(n.parent_id, state)
+      n ->
+        if n.dir && n.dir != "" do
+          n.dir
+        else
+          crawl_dir(n.parent_id, state)
+        end
     end
   end
 
@@ -86,14 +90,26 @@ defmodule ReadabilityEx.Metadata do
   end
 
   defp meta_content(doc, keys) do
-    keys
-    |> Enum.map(fn k ->
-      Floki.find(doc, "meta[property='#{k}'], meta[name='#{k}'], meta[itemprop='#{k}']")
-      |> Floki.attribute("content")
-      |> List.first()
-      |> blank_to_nil()
+    metas = Floki.find(doc, "meta")
+
+    Enum.find_value(keys, fn key ->
+      Enum.find_value(metas, fn meta ->
+        attrs = Floki.attribute(meta, "property") ++ Floki.attribute(meta, "name") ++ Floki.attribute(meta, "itemprop")
+        content = meta |> Floki.attribute("content") |> List.first() |> blank_to_nil()
+
+        if content && Enum.any?(attrs, &meta_key_match?(&1, key)) do
+          content
+        else
+          nil
+        end
+      end)
     end)
-    |> Enum.find(& &1)
+  end
+
+  defp meta_key_match?(attr, key) do
+    attr
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.any?(&(&1 == key))
   end
 
   defp get_jsonld(raw_html) do

@@ -28,6 +28,7 @@ defmodule ReadabilityEx.Sieve do
           article_node
           |> Cleaner.fix_lazy_images()
           |> maybe_clean_conditionally(flags)
+          |> Cleaner.remove_unlikely_nodes()
           |> Cleaner.remove_semantic_junk()
           |> Cleaner.flatten_code_tables()
           |> Cleaner.downgrade_h1()
@@ -241,14 +242,20 @@ defmodule ReadabilityEx.Sieve do
             same_class?(sib, top) ->
               true
 
-            sib.tag == "p" and String.length(sib.text || "") > 80 and
-                (sib.link_density || 0.0) < 0.25 ->
-              true
+          sib.tag == "p" and String.length(sib.text || "") > 80 and
+              (sib.link_density || 0.0) < 0.25 ->
+            true
 
-            true ->
-              false
-          end
-        end)
+          has_good_paragraph?(sib.raw) ->
+            true
+
+          has_single_image?(sib.raw) and (sib.link_density || 0.0) < 0.5 ->
+            true
+
+          true ->
+            false
+        end
+      end)
         |> Enum.map(& &1.raw)
       end
 
@@ -260,7 +267,21 @@ defmodule ReadabilityEx.Sieve do
       container = to_container_node(%{parent | raw: {parent.tag, parent.attrs, kept}})
       {"div", [{"id", "readability-page-1"}, {"class", "page"}], [container]}
     else
-      {"div", [{"id", "readability-page-1"}, {"class", "page"}], kept}
+      content =
+        case kept do
+          [{tag, _attrs, _children} = node]
+          when tag in ["div", "article", "section", "span", "p", "table", "main", "body"] ->
+            [node]
+
+          _ ->
+            if all_structural_children?(kept) do
+              kept
+            else
+              [{"section", [], kept}]
+            end
+        end
+
+      {"div", [{"id", "readability-page-1"}, {"class", "page"}], content}
     end
   end
 
@@ -281,6 +302,32 @@ defmodule ReadabilityEx.Sieve do
   defp same_class?(sib, top) do
     (sib.class || "") != "" and (sib.class || "") == (top.class || "")
   end
+
+  defp all_structural_children?(children) when is_list(children) do
+    Enum.all?(children, fn
+      {tag, _, _} -> tag in ["div", "section", "article"]
+      _ -> false
+    end)
+  end
+
+  defp all_structural_children?(_), do: false
+
+  defp has_good_paragraph?({_, _, _} = node) do
+    node
+    |> Floki.find("p")
+    |> Enum.any?(fn p ->
+      String.length(Floki.text(p) || "") > 80 and ReadabilityEx.Metrics.link_density(p) < 0.25
+    end)
+  end
+
+  defp has_good_paragraph?(_), do: false
+
+  defp has_single_image?({_, _, _} = node) do
+    img_count = node |> Floki.find("img") |> length()
+    img_count == 1
+  end
+
+  defp has_single_image?(_), do: false
 
   defp siblings_of(id, state) do
     pid = state[id].parent_id
@@ -304,9 +351,12 @@ defmodule ReadabilityEx.Sieve do
       Stream.iterate(top_id, fn x -> state[x] && state[x].parent_id end)
       |> Enum.take_while(&(!is_nil(&1)))
 
-    chain
-    |> Enum.map(&state[&1])
-    |> Enum.find_value(fn n -> find_byline_in(n.raw) end)
+    Enum.find_value(chain, fn id ->
+      case state[id] do
+        nil -> nil
+        n -> find_byline_in(n.raw)
+      end
+    end)
   end
 
   defp find_byline_in(list) when is_list(list) do
