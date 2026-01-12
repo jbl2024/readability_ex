@@ -518,25 +518,31 @@ defmodule ReadabilityEx.Cleaner do
   def simplify_nested_elements(node) do
     Floki.traverse_and_update(node, fn
       {tag, attrs, children} when tag in ["div", "section"] ->
-        if redundant_div_with_p?(tag, attrs, children) do
-          List.first(children)
-        else
-          meaningful_text? = direct_text?(children)
-          preserve_wrapper? = preserve_wrapper?(attrs)
+        cond do
+          content_wrapper_with_single_child?(attrs, children) ->
+            {_ctag, _cattrs, cchildren} = hd(Enum.filter(children, &match?({_, _, _}, &1)))
+            {tag, attrs, cchildren}
 
-          child_structural =
-            children
-            |> Enum.filter(&match?({_, _, _}, &1))
-            |> Enum.filter(fn {ctag, _, _} -> String.downcase(ctag) in ["div", "section"] end)
+          redundant_div_with_p?(tag, attrs, children) ->
+            List.first(children)
 
-          if not preserve_wrapper? and not meaningful_text? and length(child_structural) == 1 and
-               only_whitespace_text?(children) do
-            {ctag, cattrs, cchildren} = hd(child_structural)
-            merged_attrs = merge_attrs(cattrs, attrs)
-            {ctag, merged_attrs, cchildren}
-          else
-            {tag, attrs, children}
-          end
+          true ->
+            meaningful_text? = direct_text?(children)
+            preserve_wrapper? = preserve_wrapper?(attrs)
+
+            child_structural =
+              children
+              |> Enum.filter(&match?({_, _, _}, &1))
+              |> Enum.filter(fn {ctag, _, _} -> String.downcase(ctag) in ["div", "section"] end)
+
+            if not preserve_wrapper? and not meaningful_text? and length(child_structural) == 1 and
+                 only_whitespace_text?(children) do
+              {ctag, cattrs, cchildren} = hd(child_structural)
+              merged_attrs = merge_attrs(cattrs, attrs)
+              {ctag, merged_attrs, cchildren}
+            else
+              {tag, attrs, children}
+            end
         end
 
       other ->
@@ -575,8 +581,12 @@ defmodule ReadabilityEx.Cleaner do
     id_attr = attr(attrs, "id")
     class_attr = attr(attrs, "class")
 
-    id_attr == "readability-page-1" or
+    id_attr in ["readability-page-1", "content"] or
       String.split(class_attr, ~r/\s+/, trim: true) |> Enum.any?(&(&1 == "page"))
+  end
+
+  defp content_wrapper_with_single_child?(attrs, children) do
+    attr(attrs, "id") == "content" and only_whitespace_text?(children)
   end
 
   defp redundant_div_with_p?(tag, attrs, children) do

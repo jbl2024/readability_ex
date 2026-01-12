@@ -21,7 +21,11 @@ defmodule ReadabilityEx.Sieve do
         {:error, :no_candidate}
 
       true ->
-        top_id = promote_common_ancestor(top_id, state)
+        top_id =
+          top_id
+          |> promote_common_ancestor(state)
+          |> promote_content_ancestor(state)
+
         article_node = build_article_node(top_id, state, flags)
 
         cleaned =
@@ -196,6 +200,23 @@ defmodule ReadabilityEx.Sieve do
     end
   end
 
+  defp promote_content_ancestor(top_id, state) do
+    Stream.iterate(top_id, fn x -> state[x] && state[x].parent_id end)
+    |> Enum.reduce_while(top_id, fn id, _acc ->
+      case state[id] do
+        nil ->
+          {:halt, top_id}
+
+        node ->
+          if node.id_attr == "content" and node.tag in ["div", "section", "article", "main"] do
+            {:halt, id}
+          else
+            {:cont, top_id}
+          end
+      end
+    end)
+  end
+
   defp ancestor_chain(id, state) do
     Enum.reduce_while(
       Stream.iterate(id, fn x -> state[x] && state[x].parent_id end),
@@ -281,6 +302,7 @@ defmodule ReadabilityEx.Sieve do
             end
         end
 
+      content = promote_content_div(content)
       {"div", [{"id", "readability-page-1"}, {"class", "page"}], content}
     end
   end
@@ -311,6 +333,35 @@ defmodule ReadabilityEx.Sieve do
   end
 
   defp all_structural_children?(_), do: false
+
+  defp promote_content_div([{"div", attrs, children}] = content) do
+    if attr(attrs, "id") == "" and only_whitespace_children?(children) do
+      case Enum.filter(children, &match?({_, _, _}, &1)) do
+        [{"div", cattrs, _cchildren} = child] ->
+          if attr(cattrs, "id") == "content" do
+            [child]
+          else
+            content
+          end
+
+        _ ->
+          content
+      end
+    else
+      content
+    end
+  end
+
+  defp promote_content_div(content), do: content
+
+  defp only_whitespace_children?(children) when is_list(children) do
+    Enum.all?(children, fn
+      s when is_binary(s) -> String.trim(s) == ""
+      _ -> true
+    end)
+  end
+
+  defp only_whitespace_children?(_), do: false
 
   defp has_good_paragraph?({_, _, _} = node) do
     node

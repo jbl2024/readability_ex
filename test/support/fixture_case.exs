@@ -11,7 +11,7 @@ defmodule ReadabilityEx.FixtureCase do
     {:ok, result} =
       ReadabilityEx.parse(
         fix.source,
-        base_uri: "http://fakehost"
+        base_uri: "http://fakehost/test/"
       )
 
     expected_html =

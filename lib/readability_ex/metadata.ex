@@ -110,7 +110,10 @@ defmodule ReadabilityEx.Metadata do
   end
 
   defp meta_key_match?(attr, key) do
+    key = String.downcase(key)
+
     attr
+    |> String.downcase()
     |> String.split(~r/\s+/, trim: true)
     |> Enum.any?(&(&1 == key))
   end

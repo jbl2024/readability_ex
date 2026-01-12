@@ -99,7 +99,17 @@ defmodule ReadabilityEx do
           content: grab.content_html,
           textContent: text,
           length: String.length(text),
-          excerpt: meta.excerpt || first_excerpt(grab.content_html, text),
+          excerpt:
+            cond do
+              is_nil(meta.excerpt) ->
+                first_excerpt(grab.content_html, text)
+
+              is_binary(meta.excerpt) and String.trim(meta.excerpt) == "" ->
+                first_excerpt(grab.content_html, text)
+
+              true ->
+                meta.excerpt
+            end,
           byline: meta.byline || grab.byline,
           dir: meta.dir || grab.dir,
           siteName: meta.site_name,
@@ -115,7 +125,10 @@ defmodule ReadabilityEx do
 
   defp first_excerpt(content_html, text) do
     with {:ok, doc} <- Floki.parse_fragment(content_html),
-         [p | _] <- Floki.find(doc, "p") do
+         p when not is_nil(p) <-
+           doc
+           |> Floki.find("p")
+           |> Enum.find(fn node -> String.trim(Floki.text(node)) != "" end) do
       p
       |> Floki.text()
       |> String.trim()
