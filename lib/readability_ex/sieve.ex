@@ -217,26 +217,45 @@ defmodule ReadabilityEx.Sieve do
     if header_id do
       header_id
     else
-      Enum.reduce_while(chain, top_id, fn id, _acc ->
-        case state[id] do
-          nil ->
-            {:halt, top_id}
+      preferred =
+        Enum.find(chain, fn id ->
+          case state[id] do
+            nil -> false
+            node -> news_article_container?(node)
+          end
+        end)
 
-          node ->
-            if content_container?(node) do
-              {:halt, id}
-            else
-              {:cont, top_id}
-            end
-        end
-      end)
+      if preferred do
+        preferred
+      else
+        Enum.reduce_while(chain, top_id, fn id, _acc ->
+          case state[id] do
+            nil ->
+              {:halt, top_id}
+
+            node ->
+              if content_container?(node) do
+                {:halt, id}
+              else
+                {:cont, top_id}
+              end
+          end
+        end)
+      end
     end
+  end
+
+  defp news_article_container?(node) do
+    itemtype = attr(node.attrs, "itemtype") |> String.downcase()
+
+    node.id_attr == "news-article" or
+      (itemtype != "" and String.contains?(itemtype, "newsarticle"))
   end
 
   defp content_container?(node) do
     node.tag in ["div", "section", "article", "main"] and
-      (node.id_attr == "content" or article_body_attr?(node) or content_class?(node) or
-         article_header_container?(node))
+      (node.id_attr in ["content", "news-article"] or article_body_attr?(node) or
+         content_class?(node) or article_header_container?(node))
   end
 
   defp article_header_container?(node) do
@@ -473,64 +492,103 @@ defmodule ReadabilityEx.Sieve do
       Stream.iterate(top_id, fn x -> state[x] && state[x].parent_id end)
       |> Enum.take_while(&(!is_nil(&1)))
 
-    Enum.find_value(chain, fn id ->
-      case state[id] do
-        nil -> nil
-        n -> find_byline_in(n.raw)
-      end
-    end)
+    candidates =
+      chain
+      |> Enum.flat_map(fn id ->
+        case state[id] do
+          nil -> []
+          n -> find_all_bylines_in(n.raw)
+        end
+      end)
+      |> Enum.map(&String.trim/1)
+      |> Enum.filter(fn text -> String.length(text) in 3..120 end)
+      |> Enum.uniq()
+
+    best =
+      candidates
+      |> Enum.sort_by(fn text -> {byline_priority(text), String.length(text)} end, :desc)
+      |> List.first()
+
+    if is_nil(best) or String.length(best) <= 4 do
+      fallback_byline(top_id, state) || best
+    else
+      best
+    end
   end
 
-  defp find_byline_in(list) when is_list(list) do
-    Enum.find_value(list, &find_byline_in/1)
+  defp find_all_bylines_in(list) when is_list(list) do
+    Enum.flat_map(list, &find_all_bylines_in/1)
   end
 
-  defp find_byline_in({_, attrs, children} = node) do
+  defp find_all_bylines_in({_, attrs, children} = node) do
     s = attr(attrs, "class") <> " " <> attr(attrs, "id")
 
     cond do
       negative_or_unlikely?(s) ->
-        nil
+        []
 
-      itemprop_author?(attrs) or Regex.match?(~r/\bauteur\b/i, s) ->
+      itemprop_author?(attrs) or Regex.match?(~r/\bauteur\b/i, s) or rel_author?(attrs) ->
         text =
           node
           |> Floki.text()
           |> String.trim()
           |> String.replace(~r/\s*[\-–—]+$/, "")
 
-        if String.length(text) in 3..120, do: text, else: nil
-
-      rel_author?(attrs) ->
-        text =
-          node
-          |> Floki.text()
-          |> String.trim()
-          |> String.replace(~r/\s*[\-–—]+$/, "")
-
-        if String.length(text) in 3..120, do: text, else: nil
+        [text] ++ find_all_bylines_in(children)
 
       Regex.match?(Constants.re_byline(), s) ->
-        child = find_byline_in(children)
+        text =
+          node
+          |> Floki.text()
+          |> String.trim()
+          |> String.replace(~r/\s*[\-–—]+$/, "")
 
-        if child do
-          child
-        else
-          text =
-            node
-            |> Floki.text()
-            |> String.trim()
-            |> String.replace(~r/\s*[\-–—]+$/, "")
-
-          if String.length(text) in 3..120, do: text, else: nil
-        end
+        [text] ++ find_all_bylines_in(children)
 
       true ->
-        find_byline_in(children)
+        find_all_bylines_in(children)
     end
   end
 
-  defp find_byline_in(_), do: nil
+  defp find_all_bylines_in(_), do: []
+
+  defp byline_priority(text) do
+    if Regex.match?(~r/^(par|by)\b/i, text), do: 2, else: 1
+  end
+
+  defp fallback_byline(root_id, state) do
+    root_id
+    |> collect_nodes_in_order(state)
+    |> Enum.find_value(fn n ->
+      s = (n.class || "") <> " " <> (n.id_attr || "")
+
+      cond do
+        Regex.match?(~r/\bauthorname\b/i, s) ->
+          name = n.raw |> Floki.text() |> String.trim()
+          if name != "", do: "Par " <> name, else: nil
+
+        true ->
+          text = n.raw |> Floki.text() |> String.trim()
+          if Regex.match?(~r/^Par\s+\S+/i, text), do: text, else: nil
+      end
+    end)
+    |> case do
+      nil -> nil
+      text -> if String.length(text) in 3..120, do: text, else: nil
+    end
+  end
+
+  defp collect_nodes_in_order(nil, _state), do: []
+
+  defp collect_nodes_in_order(id, state) do
+    case state[id] do
+      nil ->
+        []
+
+      node ->
+        [node | Enum.flat_map(node.child_ids || [], &collect_nodes_in_order(&1, state))]
+    end
+  end
 
   defp negative_or_unlikely?(s) do
     Regex.match?(Constants.re_negative(), s) or Regex.match?(Constants.re_unlikely(), s)

@@ -376,7 +376,7 @@ defmodule ReadabilityEx.Cleaner do
         data_component = attr(attrs, "data-component")
 
         if Regex.match?(
-             ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment|recirc|itemendrow|related-articles-module|most-popular-recircs|teads|caption-credit|post-meta|bloc_signature/i,
+             ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment|recirc|itemendrow|related-articles-module|most-popular-recircs|teads|caption-credit|post-meta|bloc_signature|banner-headline|breadcrumbs|authors-container/i,
              s
            ) or Regex.match?(~r/\btaboola\b/i, s) or data_component == "taboola" or
              String.starts_with?(attr(attrs, "id"), "twttr_") or
