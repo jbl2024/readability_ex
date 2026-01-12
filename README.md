@@ -3,6 +3,14 @@
 High-fidelity Elixir port of Mozilla Readability.js focused on extracting the
 main article content from full HTML documents.
 
+This project is derived from Mozilla Readability.js and is distributed under
+the Apache 2.0 license.
+
+## Upstream attribution
+
+- Mozilla Readability.js source code: https://github.com/mozilla/readability/
+- Mozilla Readability test suite (fixtures): https://github.com/mozilla/readability/tree/main/test/test-pages
+
 ## Installation
 
 If [available in Hex](https://hex.pm/docs/publish), the package can be installed
@@ -125,3 +133,7 @@ Customize options:
 - `mix test`
 - `mix format`
 - `mix credo`
+
+## License
+
+Apache 2.0. See `LICENSE`.
