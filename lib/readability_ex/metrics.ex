@@ -12,8 +12,11 @@ defmodule ReadabilityEx.Metrics do
       links_text =
         node
         |> Floki.find("a")
-        |> Floki.text()
-        |> String.length()
+        |> Enum.reduce(0, fn link, acc ->
+          href = Floki.attribute(link, "href") |> List.first() |> to_string()
+          coefficient = if String.starts_with?(href, "#"), do: 0.3, else: 1.0
+          acc + String.length(Floki.text(link)) * coefficient
+        end)
 
       links_text / len
     end

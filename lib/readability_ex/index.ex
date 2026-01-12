@@ -59,9 +59,15 @@ defmodule ReadabilityEx.Index do
     role = get_attr(attrs, "role")
     dir = get_attr(attrs, "dir")
 
+    aria_hidden = String.downcase(get_attr(attrs, "aria-hidden")) == "true"
+
+    fallback_image? =
+      class != "" and
+        String.contains?(String.downcase(class), "fallback-image")
+
     hidden =
       get_attr(attrs, "hidden") != "" or
-        String.downcase(get_attr(attrs, "aria-hidden")) == "true" or
+        (aria_hidden and not fallback_image?) or
         String.contains?(String.downcase(get_attr(attrs, "style")), "display:none") or
         String.contains?(String.downcase(get_attr(attrs, "style")), "visibility:hidden")
 

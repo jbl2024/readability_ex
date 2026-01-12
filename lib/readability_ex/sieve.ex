@@ -3,37 +3,46 @@ defmodule ReadabilityEx.Sieve do
 
   alias ReadabilityEx.{Cleaner, Constants, Metadata, Metrics}
 
-  @spec grab_article(map(), Floki.html_tree(), integer(), binary(), boolean(), keyword()) ::
+  @spec grab_article(
+          map(),
+          Floki.html_tree(),
+          integer(),
+          binary(),
+          boolean(),
+          keyword()
+        ) ::
           {:ok, map()} | {:error, atom()}
   def grab_article(state, _doc, flags, base_uri, absolute_fragments?, opts) do
-    state =
+    {state, byline} =
       state
       |> drop_hidden()
       |> drop_aria_roles()
+      |> drop_modal_dialogs()
       |> maybe_strip_unlikely(flags)
+      |> drop_empty_containers()
+      |> drop_bylines()
 
     state = score_candidates(state, flags)
-    state = propagate_scores(state)
-    {top_id, state} = pick_top_candidate(state)
+    {top_id, top_candidates, state} = pick_top_candidate(state, opts)
 
     cond do
       is_nil(top_id) ->
         {:error, :no_candidate}
 
       true ->
-        top_id =
-          top_id
-          |> promote_common_ancestor(state)
-          |> promote_content_ancestor(state)
+        {top_id, state} = promote_common_ancestor(top_id, top_candidates, state, flags)
+        {top_id, state} = promote_content_ancestor(top_id, state)
+        top_id = promote_article_container(top_id, state)
 
         article_node = build_article_node(top_id, state, flags)
 
         cleaned =
           article_node
+          |> Cleaner.remove_byline_nodes()
           |> Cleaner.fix_lazy_images()
           |> maybe_clean_conditionally(flags)
-          |> Cleaner.remove_unlikely_nodes()
           |> Cleaner.remove_semantic_junk()
+          |> Cleaner.wrap_continue_links()
           |> Cleaner.flatten_code_tables()
           |> Cleaner.downgrade_h1()
           |> Cleaner.simplify_nested_elements()
@@ -41,13 +50,14 @@ defmodule ReadabilityEx.Sieve do
           |> Cleaner.absolutize_uris(base_uri, absolute_fragments?)
           |> Cleaner.replace_javascript_links()
           |> Cleaner.remove_empty_nodes()
+          |> Cleaner.simplify_nested_elements()
           |> Cleaner.strip_attributes_and_classes(opts[:preserve_classes])
 
         {:ok,
          %{
            content_html: Floki.raw_html(cleaned),
            text: Floki.text(cleaned),
-           byline: find_byline_near(top_id, state),
+           byline: byline || find_byline_near(top_id, state),
            dir: Metadata.get_direction(top_id, state)
          }}
     end
@@ -70,11 +80,23 @@ defmodule ReadabilityEx.Sieve do
     |> Map.new()
   end
 
+  defp drop_modal_dialogs(state) do
+    Enum.reject(state, fn {_id, n} ->
+      aria_modal = attr(n.attrs, "aria-modal") |> String.downcase()
+      aria_modal == "true" and (n.role || "") |> String.downcase() == "dialog"
+    end)
+    |> Map.new()
+  end
+
   defp maybe_strip_unlikely(state, flags) do
     if Constants.has_flag?(flags, Constants.flag_strip_unlikelys()) do
       Enum.reject(state, fn {_id, n} ->
         s = (n.class || "") <> " " <> (n.id_attr || "")
-        Regex.match?(Constants.re_unlikely(), s) and not Regex.match?(Constants.re_ok_maybe(), s)
+
+        Regex.match?(Constants.re_unlikely(), s) and not Regex.match?(Constants.re_ok_maybe(), s) and
+          not has_ancestor_tag?(n.id, state, "table") and
+          not has_ancestor_tag?(n.id, state, "code") and
+          n.tag not in ["body", "a"]
       end)
       |> Map.new()
     else
@@ -89,387 +111,262 @@ defmodule ReadabilityEx.Sieve do
       if MapSet.member?(candidate_tags, n.tag) and String.length(n.text || "") >= 25 do
         comma_segments = n.text |> String.split(Constants.re_commas()) |> length()
         len_bonus = min(n.text |> String.length() |> Kernel./(100) |> Float.floor(), 3.0)
-        base = 1.0 + comma_segments + len_bonus
+        content_score = 1.0 + comma_segments + len_bonus
 
-        weight =
-          if Constants.has_flag?(flags, Constants.flag_weight_classes()) do
-            Metrics.class_weight(n.class, n.id_attr)
-          else
-            0
+        ancestors = ancestor_ids(id, state, 5)
+
+        Enum.reduce(Enum.with_index(ancestors), acc, fn {ancestor_id, level}, acc2 ->
+          case acc2[ancestor_id] do
+            nil ->
+              acc2
+
+            ancestor ->
+              ancestor =
+                if ancestor.is_candidate do
+                  ancestor
+                else
+                  base = tag_score_base(ancestor.tag) + class_weight(ancestor, flags)
+                  %{ancestor | is_candidate: true, score: base, content_score: base}
+                end
+
+              divider =
+                case level do
+                  0 -> 1
+                  1 -> 2
+                  _ -> level * 3
+                end
+
+              add = content_score / divider
+
+              updated = %{
+                ancestor
+                | score: ancestor.score + add,
+                  content_score: ancestor.content_score + add,
+                  is_candidate: true
+              }
+
+              Map.put(acc2, ancestor_id, updated)
           end
-
-        score = base + weight
-        Map.put(acc, id, %{n | is_candidate: true, content_score: score, score: score})
+        end)
       else
         acc
       end
     end)
   end
 
-  defp propagate_scores(state) do
-    candidates = Enum.filter(state, fn {_id, n} -> n.is_candidate end)
-
-    Enum.reduce(candidates, state, fn {_id, n}, acc ->
-      propagate_up(n.parent_id, n.content_score, 0, acc)
-    end)
-  end
-
-  defp propagate_up(nil, _score, _level, state), do: state
-
-  defp propagate_up(pid, score, level, state) do
-    case state[pid] do
-      nil ->
-        state
-
-      parent ->
-        divider =
-          case level do
-            0 -> 1
-            1 -> 2
-            _ -> level * 3
-          end
-
-        add = score / divider
-
-        updated = %{
-          parent
-          | score: parent.score + add,
-            content_score: parent.content_score + add,
-            is_candidate: true
-        }
-
-        state = Map.put(state, pid, updated)
-        propagate_up(parent.parent_id, score, level + 1, state)
-    end
-  end
-
-  defp pick_top_candidate(state) do
-    top =
+  defp pick_top_candidate(state, opts) do
+    candidates =
       state
-      |> Enum.reject(fn {_id, n} ->
-        n.tag in ["html", "body", "head"] or unlikely_candidate?(n)
+      |> Enum.filter(fn {_id, n} ->
+        n.is_candidate and n.tag not in ["html", "body", "head"]
       end)
-      |> Enum.map(fn {id, n} ->
-        final = n.score * (1.0 - (n.link_density || 0.0))
-        {id, final}
+
+    state =
+      Enum.reduce(candidates, state, fn {id, n}, acc ->
+        final = n.content_score * (1.0 - (n.link_density || 0.0))
+        updated = %{n | score: final, content_score: final}
+        Map.put(acc, id, updated)
       end)
-      |> Enum.max_by(fn {_id, s} -> s end, fn -> {nil, 0.0} end)
 
-    {top_id, top_score} = top
+    nb_top = opts[:nb_top_candidates] || 5
 
-    if top_score > 0.0 do
-      {top_id, state}
-    else
+    top_candidates =
+      state
+      |> Enum.filter(fn {_id, n} ->
+        n.is_candidate and n.tag not in ["html", "body", "head"]
+      end)
+      |> Enum.sort_by(fn {_id, n} -> n.score end, :desc)
+      |> Enum.take(nb_top)
+      |> Enum.map(fn {id, _n} -> id end)
+
+    top_id = List.first(top_candidates)
+
+    if is_nil(top_id) or (state[top_id] && state[top_id].score <= 0.0) do
       body_id =
         state
         |> Enum.find_value(fn {id, n} -> if n.tag == "body", do: id, else: nil end)
 
-      {body_id || top_id, state}
+      {body_id || top_id, top_candidates, state}
+    else
+      {top_id, top_candidates, state}
     end
   end
 
-  defp promote_common_ancestor(top_id, state) do
+  defp promote_common_ancestor(top_id, top_candidates, state, flags) do
     top = state[top_id]
-    top_score = max(0.0001, top.score)
 
-    alts =
-      state
-      |> Enum.filter(fn {id, n} ->
-        id != top_id and n.is_candidate and n.score / top_score >= 0.75
-      end)
-      |> Enum.map(fn {id, _} -> id end)
-
-    if length(alts) < 3 do
-      top_id
+    if is_nil(top) do
+      {top_id, state}
     else
-      all = [top_id | alts]
-      ancestors = Enum.map(all, &ancestor_chain(&1, state))
+      top_score = max(0.0001, top.score)
 
-      common =
-        ancestors
-        |> Enum.reduce(fn a, b -> MapSet.intersection(a, b) end)
-        |> MapSet.to_list()
+      alternative_candidates =
+        top_candidates
+        |> Enum.drop(1)
+        |> Enum.filter(fn id ->
+          case state[id] do
+            nil -> false
+            n -> n.score / top_score >= 0.75
+          end
+        end)
 
-      # Pick closest common ancestor that is not nil
-      chosen =
-        common
-        |> Enum.map(fn aid -> {aid, depth_from(top_id, aid, state)} end)
-        |> Enum.reject(fn {aid, d} -> is_nil(aid) or is_nil(d) end)
-        |> Enum.sort_by(fn {_aid, d} -> d end)
-        |> Enum.map(fn {aid, _} -> aid end)
-        |> List.first()
+      alternative_ancestors =
+        Enum.map(alternative_candidates, fn id -> ancestor_chain(id, state) end)
 
-      chosen || top_id
+      min_candidates = 3
+
+      {top_id, state} =
+        if length(alternative_ancestors) >= min_candidates do
+          parent_id = top.parent_id
+
+          find_common_ancestor(parent_id, alternative_ancestors, state, min_candidates) || top_id
+        else
+          top_id
+        end
+        |> ensure_initialized(state, flags)
+
+      {top_id, state}
     end
   end
 
   defp promote_content_ancestor(top_id, state) do
-    chain =
-      Stream.iterate(top_id, fn x -> state[x] && state[x].parent_id end)
-      |> Enum.take_while(& &1)
+    top = state[top_id]
 
-    header_id =
-      Enum.find(chain, fn id ->
-        case state[id] do
-          nil -> false
-          node -> article_header_container?(node)
-        end
-      end)
-
-    if header_id do
-      header_id
+    if is_nil(top) do
+      {top_id, state}
     else
-      preferred =
-        Enum.find(chain, fn id ->
-          case state[id] do
-            nil -> false
-            node -> news_article_container?(node)
-          end
-        end)
+      parent_id = top.parent_id
+      last_score = top.score
+      score_threshold = last_score / 3.0
 
-      if preferred do
-        preferred
-      else
-        Enum.reduce_while(chain, top_id, fn id, _acc ->
-          case state[id] do
+      {top_id, state} =
+        Stream.iterate(parent_id, fn id -> state[id] && state[id].parent_id end)
+        |> Enum.reduce_while({top_id, state, last_score}, fn id, {current_id, st, last} ->
+          case st[id] do
             nil ->
-              {:halt, top_id}
+              {:halt, {current_id, st, last}}
 
-            node ->
-              if content_container?(node) do
-                {:halt, id}
-              else
-                {:cont, top_id}
+            parent ->
+              parent_score = parent.score
+
+              cond do
+                parent.tag == "body" ->
+                  {:halt, {current_id, st, last}}
+
+                parent_score < score_threshold ->
+                  {:halt, {current_id, st, last}}
+
+                parent_score > last ->
+                  {:halt, {id, st, parent_score}}
+
+                true ->
+                  {:cont, {current_id, st, parent_score}}
               end
           end
         end)
-      end
+        |> then(fn {id, st, _last} -> {id, st} end)
+
+      top_id = promote_single_child(top_id, state)
+
+      {top_id, state}
     end
   end
 
-  defp news_article_container?(node) do
-    itemtype = attr(node.attrs, "itemtype") |> String.downcase()
+  defp promote_article_container(top_id, state) do
+    chain =
+      Stream.iterate(top_id, fn id -> state[id] && state[id].parent_id end)
+      |> Enum.take_while(& &1)
+      |> Enum.map(&state[&1])
+      |> Enum.reject(&is_nil/1)
 
-    node.tag not in ["html", "head", "body"] and
-      (node.id_attr in ["news-article", "story"] or
-         (itemtype != "" and String.contains?(itemtype, "newsarticle")))
-  end
-
-  defp unlikely_candidate?(node) do
-    s = (node.class || "") <> " " <> (node.id_attr || "")
-    String.match?(s, ~r/\bmodal\b/i) or
-      (Regex.match?(Constants.re_unlikely(), s) and not Regex.match?(Constants.re_ok_maybe(), s))
-  end
-
-  defp content_container?(node) do
-    node.tag in ["div", "section", "article", "main"] and
-      (node.id_attr in ["content", "news-article", "story"] or article_body_attr?(node) or
-         content_class?(node) or article_header_container?(node))
-  end
-
-  defp article_header_container?(node) do
-    node.raw
-    |> Floki.find("header.article-header")
+    chain
+    |> Enum.filter(&article_container?/1)
+    |> List.last()
     |> case do
-      [] -> false
-      _ -> has_article_body_descendant?(node.raw)
+      nil -> top_id
+      node -> node.id
     end
   end
 
-  defp has_article_body_descendant?(raw) do
-    raw
-    |> Floki.find("[itemprop]")
-    |> Enum.any?(fn n ->
-      n
-      |> Floki.attribute("itemprop")
-      |> List.first()
-      |> to_string()
-      |> String.downcase()
-      |> String.contains?("articlebody")
-    end)
-  end
+  defp article_container?(node) do
+    tag = node.tag
+    id_attr = node.id_attr || ""
 
-  defp article_body_attr?(node) do
-    itemprop = attr(node.attrs, "itemprop") |> String.downcase()
-    String.contains?(itemprop, "articlebody")
-  end
-
-  defp content_class?(node) do
-    s = (node.class || "") <> " " <> (node.id_attr || "")
-    Regex.match?(~r/\bpost-body\b|\bentry-content\b|\barticle-body\b|\barticlebody\b/i, s)
+    tag in ["section", "article"] and
+      Regex.match?(~r/\bnews-article\b|\bstory\b/i, id_attr)
   end
 
   defp ancestor_chain(id, state) do
     Enum.reduce_while(
       Stream.iterate(id, fn x -> state[x] && state[x].parent_id end),
-      MapSet.new(),
+      [],
       fn x, acc ->
         if is_nil(x) do
           {:halt, acc}
         else
-          {:cont, MapSet.put(acc, x)}
+          {:cont, [x | acc]}
         end
       end
     )
+    |> Enum.reverse()
   end
-
-  defp depth_from(child, ancestor, state) do
-    do_depth(child, ancestor, state, 0)
-  end
-
-  defp do_depth(nil, _a, _s, _d), do: nil
-  defp do_depth(a, a, _s, d), do: d
-  defp do_depth(c, a, s, d), do: do_depth(s[c] && s[c].parent_id, a, s, d + 1)
 
   defp build_article_node(top_id, state, _flags) do
     top = state[top_id]
     siblings = siblings_of(top_id, state)
 
-    top_final = top.score * (1.0 - top.link_density)
+    top_final = top.score
     threshold = max(10.0, top_final * 0.2)
 
-    kept =
-      if top.tag == "body" do
-        {_tag, _attrs, children} = top.raw
-        children
-      else
+    if top.tag == "body" do
+      {_tag, _attrs, children} = top.raw
+      {"div", [{"id", "readability-page-1"}, {"class", "page"}], children}
+    else
+      kept =
         siblings
         |> Enum.filter(fn sib ->
+          content_bonus =
+            if same_class?(sib, top) and (top.class || "") != "" do
+              top.score * 0.2
+            else
+              0.0
+            end
+
           cond do
             sib.id == top_id ->
               true
 
-            sib.score >= threshold ->
-              true
-
-            same_class?(sib, top) ->
+            sib.is_candidate and sib.score + content_bonus >= threshold ->
               true
 
             sib.tag == "p" and String.length(sib.text || "") > 80 and
                 (sib.link_density || 0.0) < 0.25 ->
               true
 
-            has_good_paragraph?(sib.raw) ->
-              true
-
-            has_single_image?(sib.raw) and (sib.link_density || 0.0) < 0.5 ->
+            sib.tag == "p" and String.length(sib.text || "") < 80 and
+              String.length(sib.text || "") > 0 and (sib.link_density || 0.0) == 0.0 and
+                String.match?(sib.text || "", ~r/\.( |$)/) ->
               true
 
             true ->
               false
           end
         end)
-        |> Enum.map(& &1.raw)
-      end
+        |> Enum.map(fn sib ->
+          if alter_to_div?(sib.tag) do
+            set_node_tag(sib.raw, "div")
+          else
+            sib.raw
+          end
+        end)
 
-    parent = state[top.parent_id]
-
-    if not is_nil(parent) and top.tag == "article" and
-         (parent.tag == "main" or
-            (container_candidate?(parent) and parent.tag in ["div", "section", "main"])) do
-      container = to_container_node(%{parent | raw: {parent.tag, parent.attrs, kept}})
-      {"div", [{"id", "readability-page-1"}, {"class", "page"}], [container]}
-    else
-      content =
-        case kept do
-          [{tag, _attrs, _children} = node]
-          when tag in ["div", "article", "section", "span", "p", "table", "main", "body"] ->
-            [node]
-
-          _ ->
-            cond do
-              all_structural_children?(kept) -> kept
-              all_text_children?(kept) -> kept
-              true -> [{"section", [], kept}]
-            end
-        end
-
-      content = promote_content_div(content)
-      {"div", [{"id", "readability-page-1"}, {"class", "page"}], content}
-    end
-  end
-
-  defp container_candidate?(node) do
-    s = (node.class || "") <> " " <> (node.id_attr || "")
-    Regex.match?(Constants.re_positive(), s)
-  end
-
-  defp to_container_node(node) do
-    {tag, attrs, children} = node.raw
-
-    case tag do
-      "main" -> {"div", attrs, children}
-      _ -> node.raw
+      {"div", [{"id", "readability-page-1"}, {"class", "page"}], kept}
     end
   end
 
   defp same_class?(sib, top) do
     (sib.class || "") != "" and (sib.class || "") == (top.class || "")
   end
-
-  defp all_structural_children?(children) when is_list(children) do
-    Enum.all?(children, fn
-      {tag, _, _} -> tag in ["div", "section", "article"]
-      _ -> false
-    end)
-  end
-
-  defp all_structural_children?(_), do: false
-
-  defp all_text_children?(children) when is_list(children) do
-    Enum.all?(children, fn
-      s when is_binary(s) -> String.trim(s) != ""
-      _ -> false
-    end)
-  end
-
-  defp all_text_children?(_), do: false
-
-  defp promote_content_div([{"div", attrs, children}] = content) do
-    if attr(attrs, "id") == "" and only_whitespace_children?(children) do
-      case Enum.filter(children, &match?({_, _, _}, &1)) do
-        [{"div", cattrs, _cchildren} = child] ->
-          if attr(cattrs, "id") == "content" do
-            [child]
-          else
-            content
-          end
-
-        _ ->
-          content
-      end
-    else
-      content
-    end
-  end
-
-  defp promote_content_div(content), do: content
-
-  defp only_whitespace_children?(children) when is_list(children) do
-    Enum.all?(children, fn
-      s when is_binary(s) -> String.trim(s) == ""
-      _ -> true
-    end)
-  end
-
-  defp only_whitespace_children?(_), do: false
-
-  defp has_good_paragraph?({_, _, _} = node) do
-    node
-    |> Floki.find("p")
-    |> Enum.any?(fn p ->
-      String.length(Floki.text(p) || "") > 80 and ReadabilityEx.Metrics.link_density(p) < 0.25
-    end)
-  end
-
-  defp has_good_paragraph?(_), do: false
-
-  defp has_single_image?({_, _, _} = node) do
-    img_count = node |> Floki.find("img") |> length()
-    img_count == 1
-  end
-
-  defp has_single_image?(_), do: false
 
   defp siblings_of(id, state) do
     pid = state[id].parent_id
@@ -485,6 +382,14 @@ defmodule ReadabilityEx.Sieve do
         |> Enum.map(&state[&1])
         |> Enum.reject(&is_nil/1)
     end
+  end
+
+  defp alter_to_div?(tag) do
+    tag not in ["div", "article", "section", "p", "ol", "ul"]
+  end
+
+  defp set_node_tag({_tag, attrs, children}, new_tag) do
+    {new_tag, attrs, children}
   end
 
   defp maybe_clean_conditionally(node, flags) do
@@ -620,4 +525,216 @@ defmodule ReadabilityEx.Sieve do
   end
 
   defp attr(attrs, k), do: (List.keyfind(attrs, k, 0) || {k, ""}) |> elem(1)
+
+  defp class_weight(node, flags) do
+    if Constants.has_flag?(flags, Constants.flag_weight_classes()) do
+      Metrics.class_weight(node.class, node.id_attr)
+    else
+      0
+    end
+  end
+
+  defp tag_score_base(tag) do
+    case tag do
+      "div" -> 5
+      "pre" -> 3
+      "td" -> 3
+      "blockquote" -> 3
+      "address" -> -3
+      "ol" -> -3
+      "ul" -> -3
+      "dl" -> -3
+      "dd" -> -3
+      "dt" -> -3
+      "li" -> -3
+      "form" -> -3
+      "h1" -> -5
+      "h2" -> -5
+      "h3" -> -5
+      "h4" -> -5
+      "h5" -> -5
+      "h6" -> -5
+      "th" -> -5
+      _ -> 0
+    end
+  end
+
+  defp ancestor_ids(id, state, max_depth) do
+    Stream.iterate(state[id] && state[id].parent_id, fn pid ->
+      state[pid] && state[pid].parent_id
+    end)
+    |> Enum.take_while(& &1)
+    |> Enum.take(max_depth)
+  end
+
+  defp has_ancestor_tag?(id, state, tag_name) do
+    tag_name = String.downcase(tag_name)
+
+    Stream.iterate(state[id] && state[id].parent_id, fn pid ->
+      state[pid] && state[pid].parent_id
+    end)
+    |> Enum.take(4)
+    |> Enum.any?(fn pid ->
+      case state[pid] do
+        nil -> false
+        node -> node.tag == tag_name
+      end
+    end)
+  end
+
+  defp ensure_initialized(top_id, state, flags) do
+    case state[top_id] do
+      nil ->
+        {top_id, state}
+
+      node ->
+        if node.is_candidate do
+          {top_id, state}
+        else
+          base = tag_score_base(node.tag) + class_weight(node, flags)
+          updated = %{node | is_candidate: true, score: base, content_score: base}
+          {top_id, Map.put(state, top_id, updated)}
+        end
+    end
+  end
+
+  defp find_common_ancestor(parent_id, alternative_ancestors, state, min_candidates) do
+    case state[parent_id] do
+      nil ->
+        nil
+
+      parent ->
+        if parent.tag == "body" do
+          nil
+        else
+          lists_containing =
+            alternative_ancestors
+            |> Enum.count(fn chain -> parent_id in chain end)
+
+          if lists_containing >= min_candidates do
+            parent_id
+          else
+            find_common_ancestor(parent.parent_id, alternative_ancestors, state, min_candidates)
+          end
+        end
+    end
+  end
+
+  defp promote_single_child(top_id, state) do
+    Stream.iterate(top_id, fn id -> state[id] && state[id].parent_id end)
+    |> Enum.reduce_while(top_id, fn id, _acc ->
+      case state[id] do
+        nil ->
+          {:halt, top_id}
+
+        node ->
+          parent = state[node.parent_id]
+
+          cond do
+            is_nil(parent) or parent.tag == "body" ->
+              {:halt, id}
+
+            length(parent.child_ids || []) == 1 ->
+              {:cont, parent.id}
+
+            true ->
+              {:halt, id}
+          end
+      end
+    end)
+  end
+
+  defp drop_empty_containers(state) do
+    Enum.reject(state, fn {_id, n} ->
+      empty_container?(n)
+    end)
+    |> Map.new()
+  end
+
+  defp empty_container?(n) do
+    if n.tag in ["div", "section", "header", "h1", "h2", "h3", "h4", "h5", "h6"] do
+      text = String.trim(n.text || "")
+
+      if text != "" do
+        false
+      else
+        children = element_children(n.raw)
+        br_count = count_tag(children, "br")
+        hr_count = count_tag(children, "hr")
+        element_count = length(children)
+        element_count == 0 or element_count == br_count + hr_count
+      end
+    else
+      false
+    end
+  end
+
+  defp element_children({_, _, children}) do
+    Enum.filter(children, &match?({_, _, _}, &1))
+  end
+
+  defp count_tag(children, tag) do
+    Enum.count(children, fn
+      {^tag, _, _} -> true
+      _ -> false
+    end)
+  end
+
+  defp drop_bylines(state) do
+    root_id = find_root_id(state)
+
+    candidates =
+      root_id
+      |> collect_nodes_in_order(state)
+      |> Enum.filter(&valid_byline_node?/1)
+
+    chosen =
+      candidates
+      |> Enum.filter(fn n -> byline_prefix?(normalize_byline_text(n.text || "")) end)
+      |> List.first()
+      |> case do
+        nil -> List.first(candidates)
+        node -> node
+      end
+
+    if is_nil(chosen) do
+      {state, nil}
+    else
+      byline = normalize_byline_text(chosen.text || "")
+
+      state =
+        Enum.reject(state, fn {id, _n} -> id == chosen.id end)
+        |> Map.new()
+
+      {state, byline}
+    end
+  end
+
+  defp valid_byline_node?(n) do
+    match_string = (n.class || "") <> " " <> (n.id_attr || "")
+    rel = attr(n.attrs, "rel") |> String.downcase()
+    itemprop = attr(n.attrs, "itemprop") |> String.downcase()
+    byline_length = String.length(String.trim(n.text || ""))
+
+    (rel == "author" or
+       String.contains?(itemprop, "author") or
+       Regex.match?(Constants.re_byline(), match_string)) and byline_length > 0 and
+      byline_length < 100
+  end
+
+  defp normalize_byline_text(text) do
+    text
+    |> String.trim()
+    |> String.replace(~r/\s*[\-–—]+$/, "")
+    |> String.trim()
+  end
+
+  defp byline_prefix?(text) do
+    Regex.match?(~r/^(par|by)\b/i, text)
+  end
+
+  defp find_root_id(state) do
+    Enum.find_value(state, fn {id, n} -> if n.tag == "html", do: id, else: nil end) ||
+      Enum.find_value(state, fn {id, n} -> if n.tag == "body", do: id, else: nil end)
+  end
 end

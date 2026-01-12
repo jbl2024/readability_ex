@@ -32,57 +32,52 @@ defmodule ReadabilityEx do
 
     state = Index.build(doc)
 
-    attempts = [
-      run_attempt(
-        state,
-        doc,
-        meta,
-        title,
-        base_uri,
-        absolute_fragments?,
-        Constants.flag_all(),
-        opts
-      ),
-      run_attempt(
-        state,
-        doc,
-        meta,
-        title,
-        base_uri,
-        absolute_fragments?,
-        Constants.flag_no_strip_unlikelys(),
-        opts
-      ),
-      run_attempt(
-        state,
-        doc,
-        meta,
-        title,
-        base_uri,
-        absolute_fragments?,
-        Constants.flag_no_weight_classes(),
-        opts
-      ),
-      run_attempt(
-        state,
-        doc,
-        meta,
-        title,
-        base_uri,
-        absolute_fragments?,
-        Constants.flag_no_clean_conditionally(),
-        opts
-      )
+    flags_list = [
+      Constants.flag_all(),
+      Constants.flag_no_strip_unlikelys(),
+      Constants.flag_no_weight_classes(),
+      Constants.flag_no_clean_conditionally()
     ]
 
+    {result, attempts} =
+      Enum.reduce_while(flags_list, {nil, []}, fn flags, {found, acc} ->
+        case run_attempt(
+               state,
+               doc,
+               meta,
+               title,
+               base_uri,
+               absolute_fragments?,
+               flags,
+               opts
+             ) do
+          nil ->
+            {:cont, {found, acc}}
+
+          attempt ->
+            if attempt._pass_ok do
+              {:halt, {attempt, acc}}
+            else
+              {:cont, {found, [attempt | acc]}}
+            end
+        end
+      end)
+
     best =
-      attempts
-      |> Enum.reject(&is_nil/1)
-      |> Enum.max_by(& &1.length, fn -> nil end)
+      cond do
+        not is_nil(result) ->
+          result
+
+        attempts != [] ->
+          Enum.max_by(attempts, & &1.length, fn -> nil end)
+
+        true ->
+          nil
+      end
 
     case best do
       nil -> {:error, :not_readable}
-      result -> {:ok, result}
+      result -> {:ok, Map.delete(result, :_pass_ok)}
     end
   end
 
@@ -141,7 +136,6 @@ defmodule ReadabilityEx do
     end
   end
 
-
   defp full_or_truncated(text) when is_binary(text) do
     if String.length(text) <= 200, do: text, else: String.slice(text, 0, 200)
   end
@@ -176,7 +170,7 @@ defmodule ReadabilityEx do
   end
 
   defp valid_codepoint?(value) do
-    value > 0 and value <= 0x10FFFF and not (value in 0xD800..0xDFFF)
+    value > 0 and value <= 0x10FFFF and value not in 0xD800..0xDFFF
   end
 
   defp normalize_opts(opts) when is_map(opts), do: normalize_opts(Map.to_list(opts))
@@ -185,6 +179,7 @@ defmodule ReadabilityEx do
     defaults = [
       char_threshold: 500,
       base_uri: nil,
+      nb_top_candidates: 5,
       preserve_classes: MapSet.new(["page", "caption", "OPEN", "CLOSE", "ORD"])
     ]
 

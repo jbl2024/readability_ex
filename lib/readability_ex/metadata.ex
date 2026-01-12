@@ -277,11 +277,11 @@ defmodule ReadabilityEx.Metadata do
         if Regex.match?(~r/^by\b/i, right) do
           name
         else
-        if String.contains?(left, ".") do
-          left
-        else
-          name
-        end
+          if String.contains?(left, ".") do
+            left
+          else
+            name
+          end
         end
       else
         name

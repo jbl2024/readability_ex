@@ -1,7 +1,7 @@
 defmodule ReadabilityEx.Cleaner do
   @moduledoc false
 
-  alias ReadabilityEx.Constants
+  alias ReadabilityEx.{Constants, Metrics}
 
   def unwrap_noscript_images(doc) do
     # Strategy:
@@ -161,16 +161,38 @@ defmodule ReadabilityEx.Cleaner do
 
   defp join_text(prev, next) do
     cond do
-      prev == "" -> next
-      next == "" -> prev
-      String.match?(prev, ~r/\s\z/u) -> prev <> next
-      String.match?(next, ~r/\A\s/u) -> prev <> next
+      prev == "" ->
+        next
+
+      next == "" ->
+        prev
+
+      String.match?(prev, ~r/\s\z/u) ->
+        prev <> next
+
+      String.match?(next, ~r/\A\s/u) ->
+        prev <> next
+
       String.match?(prev, ~r/[[:alpha:]]\z/u) and String.match?(next, ~r/\A[[:digit:]]/u) ->
         prev <> next
+
+      String.match?(prev, ~r/[[:alpha:]]\z/u) and String.match?(next, ~r/\A[[:alpha:]]/u) ->
+        second_char = String.at(next, 1)
+
+        if String.match?(next, ~r/\A[[:lower:]]/u) and
+             (String.length(next) == 1 or
+                (second_char && not String.match?(second_char, ~r/[[:alpha:]]/u))) do
+          prev <> next
+        else
+          prev <> " " <> next
+        end
+
       String.match?(prev, ~r/[[:alnum:]]\z/u) and String.match?(next, ~r/\A[[:alnum:]]/u) ->
         prev <> " " <> next
+
       String.match?(prev, ~r/[[:punct:]]\z/u) and String.match?(next, ~r/\A[[:alnum:]]/u) ->
         prev <> " " <> next
+
       true ->
         prev <> next
     end
@@ -180,6 +202,9 @@ defmodule ReadabilityEx.Cleaner do
     Floki.traverse_and_update(doc, fn
       {"div", attrs, children} = node ->
         cond do
+          (single_p_child = single_p_child(children)) && Metrics.link_density(node) < 0.25 ->
+            single_p_child
+
           single_heading_child?(children) ->
             {"p", attrs, children}
 
@@ -219,11 +244,31 @@ defmodule ReadabilityEx.Cleaner do
     end
   end
 
+  defp single_p_child(children) when is_list(children) do
+    elements = Enum.filter(children, &match?({_, _, _}, &1))
+
+    case elements do
+      [{"p", _attrs, _kids} = p] ->
+        text_ok? =
+          Enum.all?(children, fn
+            s when is_binary(s) -> String.trim(s) == ""
+            _ -> true
+          end)
+
+        if text_ok?, do: p, else: nil
+
+      _ ->
+        nil
+    end
+  end
+
+  defp single_p_child(_children), do: nil
+
   defp replace_brbr_with_p(doc) do
     # Convert sequences of <br><br> into <p> blocks, preserving block-level children.
     Floki.traverse_and_update(doc, fn
       {tag, attrs, children} when tag in ["div", "section", "article"] ->
-        if has_p_children?(children) do
+        if has_p_children?(children) or not has_double_br?(children) do
           {tag, attrs, children}
         else
           new_children = br_children_to_paragraphs(children)
@@ -270,6 +315,29 @@ defmodule ReadabilityEx.Cleaner do
   defp block_node?({tag, _attrs, _kids}), do: block_tag?(tag)
   defp block_node?(_), do: false
 
+  defp has_double_br?(children) when is_list(children) do
+    {found, _last_br?} =
+      Enum.reduce(children, {false, false}, fn child, {found, last_br?} ->
+        cond do
+          found ->
+            {true, last_br?}
+
+          match?({"br", _, _}, child) ->
+            if last_br?, do: {true, true}, else: {false, true}
+
+          is_binary(child) and String.trim(child) == "" ->
+            {false, last_br?}
+
+          true ->
+            {false, false}
+        end
+      end)
+
+    found
+  end
+
+  defp has_double_br?(_), do: false
+
   defp maybe_paragraph(children) do
     cleaned =
       children
@@ -315,6 +383,7 @@ defmodule ReadabilityEx.Cleaner do
       "hr",
       "main",
       "menu",
+      "meta",
       "nav",
       "ol",
       "p",
@@ -425,31 +494,34 @@ defmodule ReadabilityEx.Cleaner do
       when tag in ["nav", "footer", "aside", "form", "object", "embed"] ->
         nil
 
-      {tag, attrs, children} ->
-        s = attr(attrs, "class") <> " " <> attr(attrs, "id")
-        data_component = attr(attrs, "data-component")
-        data_testid = attr(attrs, "data-testid") |> String.downcase()
-        itemprop = attr(attrs, "itemprop") |> String.downcase()
+      {"div", attrs, children} ->
+        id_attr = attr(attrs, "id")
 
-        if Regex.match?(
-             ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment|recirc|itemendrow|related-articles-module|most-popular-recircs|teads|caption-credit|post-meta|bloc_signature|banner-headline|breadcrumbs|authors-container|modal/i,
-             s
-           ) or Regex.match?(~r/\btaboola\b/i, s) or data_component == "taboola" or
-             (tag == "div" and
-                Regex.match?(
-                  ~r/\bmedia-container\b|\bimage-wrapper\b|\bimage-carousel\b|\bcarousel\b/i,
-                  s
-                )) or
-             (tag == "button" and
-                (Regex.match?(~r/\bcopy\b/i, s) or
-                   Regex.match?(~r/\bcopy\b/i, Floki.text({tag, attrs, children})))) or
-             (tag == "a" and
-                String.contains?(attr(attrs, "href"), "module=RelatedLinks")) or
-             data_testid == "share-tools" or
-             (itemprop != "" and String.contains?(itemprop, "author") and tag in ["p", "span"]) or
-             attr(attrs, "id") == "bottom-wrapper" or
-             String.starts_with?(attr(attrs, "id"), "twttr_") or
-             String.starts_with?(attr(attrs, "id"), "trc_") do
+        if String.starts_with?(id_attr, "FlexAd") do
+          maybe_continue_link(children)
+        else
+          remove_semantic_junk_node({"div", attrs, children})
+        end
+
+      {tag, attrs, children} ->
+        remove_semantic_junk_node({tag, attrs, children})
+
+      other ->
+        other
+    end)
+  end
+
+  def remove_byline_nodes(node) do
+    Floki.traverse_and_update(node, fn
+      {tag, attrs, children} = n ->
+        match_string = attr(attrs, "class") <> " " <> attr(attrs, "id")
+        rel = attr(attrs, "rel") |> String.downcase()
+        itemprop = attr(attrs, "itemprop") |> String.downcase()
+        byline_length = n |> Floki.text() |> String.trim() |> String.length()
+
+        if (rel == "author" or String.contains?(itemprop, "author") or
+              Regex.match?(Constants.re_byline(), match_string)) and byline_length > 0 and
+             byline_length < 100 do
           nil
         else
           {tag, attrs, children}
@@ -458,6 +530,106 @@ defmodule ReadabilityEx.Cleaner do
       other ->
         other
     end)
+  end
+
+  def wrap_continue_links(node) do
+    Floki.traverse_and_update(node, fn
+      {tag, attrs, children} when tag in ["div", "section", "article", "main"] ->
+        {tag, attrs, wrap_continue_children(children)}
+
+      other ->
+        other
+    end)
+  end
+
+  defp wrap_continue_children(children) when is_list(children) do
+    Enum.flat_map(children, fn
+      {"a", _attrs, _children} = a ->
+        if continue_link?(a) do
+          [{"p", [], [a]}]
+        else
+          [a]
+        end
+
+      child ->
+        [child]
+    end)
+  end
+
+  defp wrap_continue_children(other), do: other
+
+  defp continue_link?(node) do
+    href = Floki.attribute(node, "href") |> List.first() |> to_string()
+    text = Floki.text(node) |> String.trim()
+
+    (String.starts_with?(href, "#story-continues") or href == "#whats-next") and
+      Regex.match?(~r/^Continue reading/i, text)
+  end
+
+  defp remove_semantic_junk_node({tag, attrs, children}) do
+    s = attr(attrs, "class") <> " " <> attr(attrs, "id")
+    id_attr = attr(attrs, "id")
+    data_component = attr(attrs, "data-component")
+    data_testid = attr(attrs, "data-testid") |> String.downcase()
+    itemprop = attr(attrs, "itemprop") |> String.downcase()
+    story_body? = Regex.match?(~r/\bstory-body\b/i, s)
+
+    if Regex.match?(
+         ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment|recirc|itemendrow|related-articles-module|most-popular-recircs|teads|caption-credit|post-meta|bloc_signature|banner-headline|breadcrumbs|authors-container|modal|dealbook-branding/i,
+         s
+       ) or Regex.match?(~r/\btaboola\b/i, s) or
+         Regex.match?(
+           ~r/\bstory-meta\b|\bstory-header\b|\bstory-ad\b|\bsharetools?\b|\bsharetool\b|\bad-placeholder\b|\breader-satisfaction\b|\bfeedback\b|\bsurvey\b|\bmarginalia\b/i,
+           s
+         ) or
+         (Regex.match?(~r/\bsupplemental\b/i, s) and not story_body?) or
+         data_component == "taboola" or
+         (tag == "div" and
+            Regex.match?(
+              ~r/\bmedia-container\b|\bimage-wrapper\b|\bimage-carousel\b|\bcarousel\b/i,
+              s
+            )) or
+         (tag == "button" and
+            (Regex.match?(~r/\bcopy\b/i, s) or
+               Regex.match?(~r/\bcopy\b/i, Floki.text({tag, attrs, children})))) or
+         (tag == "a" and
+            String.contains?(attr(attrs, "href"), "module=RelatedLinks")) or
+         data_testid == "share-tools" or
+         (itemprop != "" and String.contains?(itemprop, "author") and tag in ["p", "span"]) or
+         id_attr == "bottom-wrapper" or
+         String.starts_with?(id_attr, "twttr_") or
+         String.starts_with?(id_attr, "trc_") or
+         (id_attr != "" and Regex.match?(~r/^g-.*-chart/i, id_attr)) or
+         String.starts_with?(id_attr, "story-ad-") or
+         id_attr in [
+           "story-meta",
+           "story-header",
+           "sharetools-story-meta-footer",
+           "sharetools-masthead"
+         ] do
+      nil
+    else
+      {tag, attrs, children}
+    end
+  end
+
+  defp maybe_continue_link(children) do
+    link =
+      children
+      |> Floki.find("a")
+      |> Enum.find(fn a ->
+        href = Floki.attribute(a, "href") |> List.first() |> to_string()
+        text = Floki.text(a) |> String.trim()
+
+        String.starts_with?(href, "#story-continues") and
+          Regex.match?(~r/^Continue reading/i, text)
+      end)
+
+    if link do
+      {"p", [], [link]}
+    else
+      nil
+    end
   end
 
   def remove_unlikely_nodes(node) do
@@ -466,7 +638,8 @@ defmodule ReadabilityEx.Cleaner do
         s = attr(attrs, "class") <> " " <> attr(attrs, "id")
 
         if s != "" and Regex.match?(Constants.re_unlikely(), s) and
-             not Regex.match?(Constants.re_ok_maybe(), s) do
+             not Regex.match?(Constants.re_ok_maybe(), s) and
+             not keep_unlikely_media?(tag, attrs, children) do
           nil
         else
           {tag, attrs, children}
@@ -477,17 +650,44 @@ defmodule ReadabilityEx.Cleaner do
     end)
   end
 
+  defp keep_unlikely_media?(tag, attrs, children) do
+    tag = String.downcase(tag)
+    itemprop = attr(attrs, "itemprop") |> String.downcase()
+
+    tag in ["figure", "img", "picture", "video"] or
+      String.contains?(itemprop, "associatedmedia") or
+      media_wrapper_only?(children)
+  end
+
+  defp media_wrapper_only?(children) when is_list(children) do
+    elements = Enum.filter(children, &match?({_, _, _}, &1))
+
+    text_ok? =
+      Enum.all?(children, fn
+        s when is_binary(s) -> String.trim(s) == ""
+        _ -> true
+      end)
+
+    allowed_tags =
+      MapSet.new(["figure", "img", "picture", "video", "figcaption", "source", "span"])
+
+    text_ok? and elements != [] and
+      Enum.all?(elements, fn {ctag, _, _} ->
+        MapSet.member?(allowed_tags, String.downcase(ctag))
+      end) and
+      (contains_tag?(elements, "img") or contains_tag?(elements, "video") or
+         contains_tag?(elements, "picture") or contains_tag?(elements, "figure"))
+  end
+
+  defp media_wrapper_only?(_children), do: false
+
   def downgrade_h1(node) do
     Floki.traverse_and_update(node, fn
       {"h1", attrs, children} ->
-        itemprop = attr(attrs, "itemprop") |> String.downcase()
+        {"h2", attrs, children}
 
-        if String.contains?(itemprop, "headline") do
-          nil
-        else
-          {"h2", attrs, children}
-        end
-      other -> other
+      other ->
+        other
     end)
   end
 
@@ -497,13 +697,21 @@ defmodule ReadabilityEx.Cleaner do
     content_score = content_score(node)
 
     cond do
-      weight + content_score < 0 -> true
+      weight + content_score < 0 ->
+        true
+
       text != "" and Regex.match?(~r/\badvertising\b/i, text) and String.length(text) < 200 and
           ReadabilityEx.Metrics.link_density(node) > 0.2 ->
         true
-      text != "" and Regex.match?(Constants.re_ad_words(), text) -> true
-      text != "" and Regex.match?(Constants.re_loading_words(), text) -> true
-      true -> shady_metrics_drop?(node)
+
+      text != "" and Regex.match?(Constants.re_ad_words(), text) ->
+        true
+
+      text != "" and Regex.match?(Constants.re_loading_words(), text) ->
+        true
+
+      true ->
+        shady_metrics_drop?(node)
     end
   end
 
@@ -700,6 +908,7 @@ defmodule ReadabilityEx.Cleaner do
       case Enum.filter(children, &match?({_, _, _}, &1)) do
         [{"p", _pattrs, pchildren}] ->
           p_text = Floki.text({"p", [], pchildren}) |> String.trim()
+
           unwrap_wrapper? =
             text_container_wrapper?(attrs) or
               css_wrapper_with_media?(attrs, pchildren) or
@@ -708,8 +917,10 @@ defmodule ReadabilityEx.Cleaner do
           not Enum.any?(pchildren, fn
             {ctag, _, _} -> String.downcase(ctag) in ["h1", "h2", "h3", "h4", "h5", "h6"]
             _ -> false
-          end) and unwrap_wrapper? and not keep_bio_wrapper?(attrs, p_text)
-        _ -> false
+          end) and p_text != "" and unwrap_wrapper? and not keep_bio_wrapper?(attrs, p_text)
+
+        _ ->
+          false
       end
   end
 
@@ -724,7 +935,7 @@ defmodule ReadabilityEx.Cleaner do
     class = attr(attrs, "class")
     id_attr = attr(attrs, "id")
 
-    class == "" and id_attr == "" or
+    (class == "" and id_attr == "") or
       Regex.match?(~r/\b(text|parbase|content)\b/i, class) or
       Regex.match?(~r/\b(content|body)\b/i, id_attr)
   end
@@ -786,8 +997,22 @@ defmodule ReadabilityEx.Cleaner do
         attrs =
           attrs
           |> Enum.reject(fn {k, _} ->
-            k in ["style", "align", "bgcolor", "valign", "border", "cellpadding", "cellspacing"]
+            k in [
+              "style",
+              "align",
+              "background",
+              "bgcolor",
+              "border",
+              "cellpadding",
+              "cellspacing",
+              "frame",
+              "hspace",
+              "rules",
+              "valign",
+              "vspace"
+            ]
           end)
+          |> drop_deprecated_size_attrs(tag)
           |> keep_only_preserved_classes(preserve_classes)
 
         {tag, attrs, children}
@@ -795,6 +1020,18 @@ defmodule ReadabilityEx.Cleaner do
       other ->
         other
     end)
+  end
+
+  defp drop_deprecated_size_attrs(attrs, tag) do
+    tag = String.downcase(tag)
+
+    if tag in ["table", "th", "td", "hr", "pre"] do
+      attrs
+      |> List.keydelete("width", 0)
+      |> List.keydelete("height", 0)
+    else
+      attrs
+    end
   end
 
   def replace_javascript_links(node) do

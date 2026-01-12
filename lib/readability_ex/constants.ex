@@ -24,7 +24,9 @@ defmodule ReadabilityEx.Constants do
   defp band(a, b), do: Bitwise.band(a, b)
 
   # Tag sets
-  def candidate_tags(), do: MapSet.new(["p", "td", "pre", "blockquote"])
+  def candidate_tags(),
+    do: MapSet.new(["section", "h2", "h3", "h4", "h5", "h6", "p", "td", "pre"])
+
   def structural_tags(), do: MapSet.new(["div", "section", "article", "main"])
   def header_tags(), do: MapSet.new(["h1", "h2", "h3", "h4", "h5", "h6"])
 
@@ -35,29 +37,25 @@ defmodule ReadabilityEx.Constants do
       "menubar",
       "complementary",
       "navigation",
-      "note",
       "alert",
       "alertdialog",
-      "dialog",
-      "banner",
-      "tablist"
+      "dialog"
     ])
   end
 
   # Regexes (align with your spec; you can pin exact Mozilla regex set per commit if needed)
   def re_positive(),
-    do: ~r/article|body|content|entry|hentry|main|page|pagination|post|text|blog|story/i
+    do: ~r/article|body|content|entry|hentry|h-entry|main|page|pagination|post|text|blog|story/i
 
   def re_negative(),
     do:
-      ~r/-ad-|adbox|advert|banner|combx|comment|com-|contact|footer|gdpr|masthead|modal|nav|newsletter|promo|related|scroll|share|sidebar|sponsor|tag|tool|twitter|widget/i
+      ~r/-ad-|hidden|^hid$| hid$| hid |^hid |banner|combx|comment|com-|contact|footer|gdpr|masthead|media|meta|outbrain|promo|related|scroll|share|shoutbox|sidebar|skyscraper|sponsor|shopping|tags|widget/i
 
   def re_unlikely(),
     do:
-      ~r/combx|comment|community|disqus|extra|foot|header|menu|modal|nav|remark|rss|shoutbox|sidebar|sponsor|shopping|tags|tool|widget|related|share|social|photo/i
+      ~r/-ad-|ai2html|banner|breadcrumbs|combx|comment|community|cover-wrap|disqus|extra|footer|gdpr|header|legends|menu|related|remark|replies|rss|shoutbox|sidebar|skyscraper|social|sponsor|supplemental|ad-break|agegate|pagination|pager|popup|yom-remote/i
 
-  def re_ok_maybe(),
-    do: ~r/article|body|content|entry|hentry|main|page|pagination|post|text|blog|story/i
+  def re_ok_maybe(), do: ~r/and|article|body|column|content|main|mathjax|shadow/i
 
   def re_byline(), do: ~r/byline|author|dateline|writtenby|p-author/i
 
@@ -66,13 +64,11 @@ defmodule ReadabilityEx.Constants do
     ~r/[,،﹐︐︑⸁⸴⸲，]/
   end
 
-  def re_ad_words() do
-    ~r/^(ad(vertising|vertisement)?|pub(licite)?|werb(ung)?|广告|реклама|advertorial)$/i
-  end
+  def re_ad_words(),
+    do: ~r/^(ad(vertising|vertisement)?|pub(licité)?|werb(ung)?|广告|Реклама|Anuncio)$/iu
 
-  def re_loading_words() do
-    ~r/^(loading|chargement|загрузка|加载|読み込み)$/i
-  end
+  def re_loading_words(),
+    do: ~r/^((loading|正在加载|Загрузка|chargement|cargando)(…|\.\.\.)?)$/iu
 
   def lazy_src_attrs() do
     [
