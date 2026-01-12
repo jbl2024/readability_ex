@@ -1,11 +1,11 @@
-defmodule ReadabilityEx.Fixture001Test do
+defmodule ReadabilityEx.Fixture002Test do
   use ExUnit.Case
 
   alias ReadabilityEx.TestHelpers
 
   @fixture_id "002"
 
-  test "Readability fixture 001" do
+  test "Readability fixture 002" do
     fix = TestHelpers.read_fixture(@fixture_id)
 
     {:ok, result} =
