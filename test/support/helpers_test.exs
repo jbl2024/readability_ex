@@ -30,6 +30,7 @@ defmodule ReadabilityEx.TestHelpers do
     |> Floki.parse_fragment!()
     |> Floki.raw_html()
     |> String.replace(~r/\s+/, " ")
+    |> String.replace(~r/\s+<\//, "</")
     |> String.trim()
   end
 

@@ -28,6 +28,8 @@ defmodule ReadabilityEx.Sieve do
           article_node
           |> Cleaner.fix_lazy_images()
           |> maybe_clean_conditionally(flags)
+          |> Cleaner.remove_semantic_junk()
+          |> Cleaner.flatten_code_tables()
           |> Cleaner.simplify_nested_elements()
           |> Cleaner.absolutize_uris(base_uri)
           |> Cleaner.strip_attributes_and_classes(opts[:preserve_classes])
@@ -230,13 +232,35 @@ defmodule ReadabilityEx.Sieve do
       end)
       |> Enum.map(& &1.raw)
 
-    section =
-      case kept do
-        [{"section", _attrs, children}] -> {"section", [], children}
-        _ -> {"section", [], kept}
-      end
+    parent = state[top.parent_id]
 
-    {"div", [{"id", "readability-page-1"}, {"class", "page"}], [section]}
+    if parent && top.tag == "article" and container_candidate?(parent) and
+         parent.tag in ["div", "section", "main"] do
+      container = to_container_node(%{parent | raw: {parent.tag, parent.attrs, kept}})
+      {"div", [{"id", "readability-page-1"}, {"class", "page"}], [container]}
+    else
+      section =
+        case kept do
+          [{tag, _attrs, _children} = node] when tag in ["div", "article", "section"] -> node
+          _ -> {"section", [], kept}
+        end
+
+      {"div", [{"id", "readability-page-1"}, {"class", "page"}], [section]}
+    end
+  end
+
+  defp container_candidate?(node) do
+    s = (node.class || "") <> " " <> (node.id_attr || "")
+    Regex.match?(Constants.re_positive(), s)
+  end
+
+  defp to_container_node(node) do
+    {tag, attrs, children} = node.raw
+
+    case tag do
+      "main" -> {"div", attrs, children}
+      _ -> node.raw
+    end
   end
 
   defp same_class?(sib, top) do
@@ -267,25 +291,46 @@ defmodule ReadabilityEx.Sieve do
 
     chain
     |> Enum.map(&state[&1])
-    |> Enum.find_value(fn n ->
-      n.raw
-      |> Floki.find("*")
-      |> Enum.find_value(fn {_, attrs, _} = node ->
-        s = attr(attrs, "class") <> " " <> attr(attrs, "id")
+    |> Enum.find_value(fn n -> find_byline_in(n.raw) end)
+  end
 
-        if Regex.match?(Constants.re_byline(), s) do
-          text =
-            node
-            |> Floki.text()
-            |> String.trim()
-            |> String.replace(~r/\s*[\-–—]+$/, "")
+  defp find_byline_in(list) when is_list(list) do
+    Enum.find_value(list, &find_byline_in/1)
+  end
 
-          if String.length(text) in 3..120, do: text, else: nil
-        else
-          nil
-        end
-      end)
-    end)
+  defp find_byline_in({_, attrs, children} = node) do
+    s = attr(attrs, "class") <> " " <> attr(attrs, "id")
+
+    cond do
+      negative_or_unlikely?(s) ->
+        nil
+
+      rel_author?(attrs) or Regex.match?(Constants.re_byline(), s) ->
+        text =
+          node
+          |> Floki.text()
+          |> String.trim()
+          |> String.replace(~r/\s*[\-–—]+$/, "")
+
+        if String.length(text) in 3..120, do: text, else: nil
+
+      true ->
+        find_byline_in(children)
+    end
+  end
+
+  defp find_byline_in(_), do: nil
+
+  defp negative_or_unlikely?(s) do
+    Regex.match?(Constants.re_negative(), s) or Regex.match?(Constants.re_unlikely(), s)
+  end
+
+  defp rel_author?(attrs) do
+    attrs
+    |> attr("rel")
+    |> String.downcase()
+    |> String.split(~r/\s+/)
+    |> Enum.any?(&(&1 == "author"))
   end
 
   defp attr(attrs, k), do: (List.keyfind(attrs, k, 0) || {k, ""}) |> elem(1)

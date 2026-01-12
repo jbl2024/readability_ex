@@ -275,6 +275,16 @@ defmodule ReadabilityEx.Cleaner do
     end)
   end
 
+  def remove_semantic_junk(node) do
+    Floki.traverse_and_update(node, fn
+      {tag, _attrs, _children} when tag in ["header", "nav", "footer", "aside", "form", "iframe", "object", "embed"] ->
+        nil
+
+      other ->
+        other
+    end)
+  end
+
   defp should_drop_conditionally?(node) do
     text = Floki.text(node) |> String.trim()
 
@@ -336,6 +346,29 @@ defmodule ReadabilityEx.Cleaner do
           {ctag, merged_attrs, cchildren}
         else
           {tag, attrs, children}
+        end
+
+      other ->
+        other
+    end)
+  end
+
+  def flatten_code_tables(node) do
+    Floki.traverse_and_update(node, fn
+      {"table", _attrs, _children} = table ->
+        case Floki.find(table, "pre") do
+          [pre] ->
+            table_text = table |> Floki.text() |> String.trim()
+            pre_text = pre |> Floki.text() |> String.trim()
+
+            if table_text != "" and table_text == pre_text do
+              pre
+            else
+              table
+            end
+
+          _ ->
+            table
         end
 
       other ->
@@ -436,7 +469,12 @@ defmodule ReadabilityEx.Cleaner do
     u = URI.parse(url)
 
     cond do
-      u.scheme in ["http", "https"] -> url
+      u.scheme in ["http", "https"] ->
+        if (u.path in [nil, ""]) and is_nil(u.query) and is_nil(u.fragment) do
+          url <> "/"
+        else
+          url
+        end
       String.starts_with?(url, "//") -> (base.scheme || "https") <> ":" <> url
       true -> URI.merge(base, u) |> URI.to_string()
     end
