@@ -7,7 +7,7 @@ defmodule ReadabilityEx.Title do
 
     cond do
       meta_title != "" ->
-        get_title_from_raw(doc, meta_title)
+        meta_title
 
       true ->
         get_title_from_raw(doc, raw)
@@ -64,7 +64,7 @@ defmodule ReadabilityEx.Title do
                   orig_title
 
                 idx ->
-                  String.slice(orig_title, (idx + 1)..-1)
+                  slice_from_index(orig_title, idx + 1)
               end
               |> then(fn title ->
                 if word_count.(title) < 3 do
@@ -73,7 +73,7 @@ defmodule ReadabilityEx.Title do
                       orig_title
 
                     first_idx ->
-                      new_title = String.slice(orig_title, (first_idx + 1)..-1)
+                      new_title = slice_from_index(orig_title, first_idx + 1)
 
                       if word_count.(String.slice(orig_title, 0, first_idx)) > 5 do
                         orig_title
@@ -133,6 +133,16 @@ defmodule ReadabilityEx.Title do
     case :binary.matches(str, pattern) do
       [] -> nil
       matches -> matches |> List.last() |> elem(0)
+    end
+  end
+
+  defp slice_from_index(str, start_idx) do
+    len = String.length(str)
+
+    if start_idx >= len do
+      ""
+    else
+      String.slice(str, start_idx, len - start_idx)
     end
   end
 

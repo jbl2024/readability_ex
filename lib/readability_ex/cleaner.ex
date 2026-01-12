@@ -3,6 +3,48 @@ defmodule ReadabilityEx.Cleaner do
 
   alias ReadabilityEx.{Constants, Metrics}
 
+  @phrasing_elems MapSet.new([
+                    "ABBR",
+                    "AUDIO",
+                    "B",
+                    "BDO",
+                    "BR",
+                    "BUTTON",
+                    "CITE",
+                    "CODE",
+                    "DATA",
+                    "DATALIST",
+                    "DFN",
+                    "EM",
+                    "EMBED",
+                    "I",
+                    "IMG",
+                    "INPUT",
+                    "KBD",
+                    "LABEL",
+                    "MARK",
+                    "MATH",
+                    "METER",
+                    "NOSCRIPT",
+                    "OBJECT",
+                    "OUTPUT",
+                    "PROGRESS",
+                    "Q",
+                    "RUBY",
+                    "SAMP",
+                    "SCRIPT",
+                    "SELECT",
+                    "SMALL",
+                    "SPAN",
+                    "STRONG",
+                    "SUB",
+                    "SUP",
+                    "TEXTAREA",
+                    "TIME",
+                    "VAR",
+                    "WBR"
+                  ])
+
   def unwrap_noscript_images(doc) do
     # Strategy:
     # - remove placeholder <img> without src or tiny data URI
@@ -200,7 +242,10 @@ defmodule ReadabilityEx.Cleaner do
 
   defp convert_divs_to_paragraphs(doc) do
     Floki.traverse_and_update(doc, fn
-      {"div", attrs, children} = node ->
+      {"div", attrs, children} ->
+        children = wrap_phrasing_children(children)
+        node = {"div", attrs, children}
+
         cond do
           (single_p_child = single_p_child(children)) && Metrics.link_density(node) < 0.25 ->
             single_p_child
@@ -212,7 +257,7 @@ defmodule ReadabilityEx.Cleaner do
             node
 
           true ->
-            {"p", attrs, ensure_leading_space(children)}
+            {"p", attrs, children}
         end
 
       other ->
@@ -220,21 +265,63 @@ defmodule ReadabilityEx.Cleaner do
     end)
   end
 
-  defp ensure_leading_space([text | rest]) when is_binary(text) do
-    if text == "" or String.starts_with?(text, [" ", "\n", "\t", "\r"]) do
-      [text | rest]
-    else
-      [" " <> text | rest]
-    end
-  end
-
-  defp ensure_leading_space(children), do: children
-
   defp has_block_children?(children) when is_list(children) do
     Enum.any?(children, fn
       {tag, _attrs, _kids} -> block_tag?(tag)
       _ -> false
     end)
+  end
+
+  defp wrap_phrasing_children(children) when is_list(children) do
+    {acc, current} =
+      Enum.reduce(children, {[], []}, fn child, {acc, cur} ->
+        if phrasing_content?(child) do
+          {acc, cur ++ [child]}
+        else
+          acc = acc ++ wrap_phrasing_group(cur)
+          {acc ++ [child], []}
+        end
+      end)
+
+    acc ++ wrap_phrasing_group(current)
+  end
+
+  defp wrap_phrasing_children(children), do: children
+
+  defp wrap_phrasing_group(children) do
+    trimmed =
+      children
+      |> trim_leading_whitespace()
+      |> trim_trailing_whitespace()
+
+    if trimmed == [] do
+      []
+    else
+      [{"p", [], trimmed}]
+    end
+  end
+
+  defp trim_leading_whitespace([head | rest]) when is_binary(head) do
+    if String.trim(head) == "" do
+      trim_leading_whitespace(rest)
+    else
+      [head | rest]
+    end
+  end
+
+  defp trim_leading_whitespace(children), do: children
+
+  defp trim_trailing_whitespace(children) when is_list(children) do
+    children
+    |> Enum.reverse()
+    |> trim_leading_whitespace()
+    |> Enum.reverse()
+  end
+
+  defp trim_trailing_whitespace(children), do: children
+
+  defp element_children({_, _, children}) do
+    Enum.filter(children, &match?({_, _, _}, &1))
   end
 
   defp single_heading_child?(children) when is_list(children) do
@@ -419,6 +506,147 @@ defmodule ReadabilityEx.Cleaner do
     end)
   end
 
+  def mark_data_tables(root) do
+    mark_node(root, false, false)
+  end
+
+  defp mark_node({tag, attrs, children} = node, inside_data_table?, inside_table?) do
+    tag = String.downcase(tag)
+    data_table? = tag == "table" and data_table?(node)
+
+    attrs =
+      attrs
+      |> maybe_put_attr("data-readability-datatable", data_table? && "1")
+      |> maybe_put_attr("data-readability-datatable", (tag == "table" and not data_table?) && "0")
+      |> maybe_put_attr("data-readability-inside-datatable", inside_data_table? && "1")
+      |> maybe_put_attr("data-readability-inside-table", inside_table? && "1")
+
+    children =
+      children
+      |> Enum.map(fn
+        {ctag, cattrs, cchildren} ->
+          mark_node(
+            {ctag, cattrs, cchildren},
+            inside_data_table? or data_table?,
+            inside_table? or tag == "table"
+          )
+
+        other ->
+          other
+      end)
+
+    {tag, attrs, children}
+  end
+
+  defp mark_node(other, _inside_data, _inside_table), do: other
+
+  defp maybe_put_attr(attrs, _k, false), do: attrs
+  defp maybe_put_attr(attrs, _k, nil), do: attrs
+
+  defp maybe_put_attr(attrs, k, v) do
+    List.keystore(attrs, k, 0, {k, v})
+  end
+
+  defp data_table?({_, attrs, children} = node) do
+    role = attr(attrs, "role")
+
+    cond do
+      role == "presentation" ->
+        false
+
+      attr(attrs, "datatable") == "0" ->
+        false
+
+      attr(attrs, "summary") != "" ->
+        true
+
+      has_caption?(children) ->
+        true
+
+      has_data_table_descendant?(node) ->
+        true
+
+      has_nested_table?(node) ->
+        false
+
+      true ->
+        size = row_and_column_count(node)
+
+        cond do
+          size.columns == 1 or size.rows == 1 ->
+            false
+
+          size.rows >= 10 or size.columns > 4 ->
+            true
+
+          true ->
+            size.rows * size.columns > 10
+        end
+    end
+  end
+
+  defp has_caption?(children) do
+    Enum.any?(children, fn
+      {"caption", _attrs, cchildren} ->
+        Enum.any?(cchildren, fn
+          s when is_binary(s) -> String.trim(s) != ""
+          {_, _, _} -> true
+          _ -> false
+        end)
+
+      _ ->
+        false
+    end)
+  end
+
+  defp has_data_table_descendant?(node) do
+    Floki.find(node, "col,colgroup,tfoot,thead,th") != []
+  end
+
+  defp has_nested_table?(node) do
+    Floki.find(node, "table table") != []
+  end
+
+  defp row_and_column_count(node) do
+    rows =
+      node
+      |> Floki.find("tr")
+
+    Enum.reduce(rows, %{rows: 0, columns: 0}, fn row, acc ->
+      rowspan =
+        row
+        |> Floki.attribute("rowspan")
+        |> List.first()
+        |> parse_int(0)
+
+      rows_count = acc.rows + max(rowspan, 1)
+
+      columns_in_row =
+        row
+        |> Floki.find("td")
+        |> Enum.reduce(0, fn cell, sum ->
+          colspan =
+            cell
+            |> Floki.attribute("colspan")
+            |> List.first()
+            |> parse_int(0)
+
+          sum + max(colspan, 1)
+        end)
+
+      %{rows: rows_count, columns: max(acc.columns, columns_in_row)}
+    end)
+  end
+
+  defp parse_int(nil, default), do: default
+
+  defp parse_int(value, default) do
+    case Integer.parse(value) do
+      {num, _} -> num
+      _ -> default
+    end
+  end
+
   defp promote_lazy_attrs(attrs) do
     src = attr(attrs, "src")
     srcset = attr(attrs, "srcset")
@@ -477,15 +705,140 @@ defmodule ReadabilityEx.Cleaner do
     # Applied to subtree (div, ul, table, etc.) based on shadiness metrics.
     Floki.traverse_and_update(node, fn
       {tag, attrs, children} = n when tag in ["div", "section", "ul", "ol", "table", "form"] ->
-        if should_drop_conditionally?(n) do
-          nil
-        else
-          {tag, attrs, children}
+        cond do
+          tag == "table" and data_table_attr?(attrs) ->
+            {tag, attrs, children}
+
+          attr(attrs, "data-readability-inside-datatable") == "1" ->
+            {tag, attrs, children}
+
+          contains_data_table?(n) ->
+            {tag, attrs, children}
+
+          tag in ["ul", "ol"] and attr(attrs, "data-readability-inside-table") == "1" ->
+            {tag, attrs, children}
+
+          tag in ["ul", "ol"] and should_drop_conditionally?(n) ->
+            if keep_list_candidate?(n) do
+              {tag, attrs, children}
+            else
+              nil
+            end
+
+          should_drop_conditionally?(n) ->
+            nil
+
+          true ->
+            {tag, attrs, children}
         end
 
       other ->
         other
     end)
+  end
+
+  defp data_table_attr?(attrs) do
+    attr(attrs, "data-readability-datatable") == "1"
+  end
+
+  defp contains_data_table?(node) do
+    Floki.find(node, "table[data-readability-datatable='1']") != []
+  end
+
+  defp keep_list_candidate?(node) do
+    element_children = element_children(node)
+
+    if Enum.any?(element_children, fn {_tag, _attrs, children} ->
+         length(Enum.filter(children, &match?({_, _, _}, &1))) > 1
+       end) do
+      false
+    else
+      li_count = node |> Floki.find("li") |> length()
+      img_count = node |> Floki.find("img") |> length()
+      img_count == li_count
+    end
+  end
+
+  def clean_headers(node) do
+    Floki.traverse_and_update(node, fn
+      {tag, attrs, _children} = header when tag in ["h1", "h2"] ->
+        class = attr(attrs, "class")
+        id_attr = attr(attrs, "id")
+
+        if Metrics.class_weight(class, id_attr) < 0 do
+          nil
+        else
+          header
+        end
+
+      other ->
+        other
+    end)
+  end
+
+  def remove_title_headers(node, title) do
+    title = String.trim(title || "")
+
+    if title == "" do
+      node
+    else
+      {node, _removed?} = remove_title_header_node(node, title, false)
+      node
+    end
+  end
+
+  defp remove_title_header_node({tag, attrs, children} = node, title, removed?) do
+    if removed? do
+      {node, removed?}
+    else
+      cond do
+        tag in ["h1", "h2"] and text_similarity(title, Floki.text(node)) > 0.75 ->
+          {nil, true}
+
+        true ->
+          {new_children, removed?} = remove_title_header_children(children, title, removed?)
+          {{tag, attrs, new_children}, removed?}
+      end
+    end
+  end
+
+  defp remove_title_header_node(other, _title, removed?), do: {other, removed?}
+
+  defp remove_title_header_children(children, title, removed?) when is_list(children) do
+    Enum.reduce(children, {[], removed?}, fn child, {acc, removed_acc?} ->
+      {new_child, removed_acc?} = remove_title_header_node(child, title, removed_acc?)
+
+      if is_nil(new_child) do
+        {acc, removed_acc?}
+      else
+        {[new_child | acc], removed_acc?}
+      end
+    end)
+    |> then(fn {acc, removed?} -> {Enum.reverse(acc), removed?} end)
+  end
+
+  defp remove_title_header_children(children, _title, removed?), do: {children, removed?}
+
+  defp text_similarity(text_a, text_b) do
+    tokens_a = tokenize(text_a)
+    tokens_b = tokenize(text_b)
+
+    if tokens_a == [] or tokens_b == [] do
+      0.0
+    else
+      token_set_a = MapSet.new(tokens_a)
+      uniq_b = Enum.reject(tokens_b, &MapSet.member?(token_set_a, &1))
+      distance_b =
+        String.length(Enum.join(uniq_b, " ")) / max(1, String.length(Enum.join(tokens_b, " ")))
+
+      1.0 - distance_b
+    end
+  end
+
+  defp tokenize(text) do
+    text
+    |> String.downcase()
+    |> String.split(~r/\W+/u, trim: true)
   end
 
   def remove_semantic_junk(node) do
@@ -966,27 +1319,113 @@ defmodule ReadabilityEx.Cleaner do
       Regex.match?(~r/^[A-Z][^,]+ is a /, text)
   end
 
-  def flatten_code_tables(node) do
+  def flatten_tables(node) do
     Floki.traverse_and_update(node, fn
       {"table", _attrs, _children} = table ->
-        case Floki.find(table, "pre") do
-          [pre] ->
-            table_text = table |> Floki.text() |> String.trim()
-            pre_text = pre |> Floki.text() |> String.trim()
-
-            if table_text != "" and table_text == pre_text do
-              pre
+        case single_cell_table?(table) do
+          {:ok, cell} ->
+            if all_phrasing?(cell) do
+              set_node_tag(cell, "p")
             else
-              table
+              set_node_tag(cell, "div")
             end
 
-          _ ->
-            table
+          :error ->
+            flatten_code_table(table)
         end
 
       other ->
         other
     end)
+  end
+
+  defp flatten_code_table(table) do
+    case Floki.find(table, "pre") do
+      [pre] ->
+        table_text = table |> Floki.text() |> String.trim()
+        pre_text = pre |> Floki.text() |> String.trim()
+
+        if table_text != "" and table_text == pre_text do
+          pre
+        else
+          table
+        end
+
+      _ ->
+        table
+    end
+  end
+
+  defp single_cell_table?(table) do
+    tbody =
+      if has_single_tag_inside_element?(table, "tbody") do
+        {_tag, _attrs, [child]} = table
+        child
+      else
+        table
+      end
+
+    with true <- has_single_tag_inside_element?(tbody, "tr"),
+         {"tr", _tr_attrs, _tr_children} = row <- first_element_child(tbody),
+         true <- has_single_tag_inside_element?(row, "td"),
+         {"td", _td_attrs, _td_children} = cell <- first_element_child(row) do
+      {:ok, cell}
+    else
+      _ -> :error
+    end
+  end
+
+  defp has_single_tag_inside_element?({_tag, _attrs, children}, wanted_tag) do
+    elements = Enum.filter(children, &match?({_, _, _}, &1))
+
+    case elements do
+      [{child_tag, _cattrs, _}] ->
+        String.downcase(child_tag) == wanted_tag and
+          not has_text_content?(children)
+
+      _ ->
+        false
+    end
+  end
+
+  defp has_single_tag_inside_element?(_, _), do: false
+
+  defp first_element_child({_, _, children}) do
+    Enum.find(children, &match?({_, _, _}, &1))
+  end
+
+  defp has_text_content?(children) do
+    Enum.any?(children, fn
+      s when is_binary(s) -> String.trim(s) != ""
+      _ -> false
+    end)
+  end
+
+  defp all_phrasing?({_, _, children}) do
+    Enum.all?(children, &phrasing_content?/1)
+  end
+
+  defp all_phrasing?(_), do: false
+
+  defp phrasing_content?(text) when is_binary(text), do: true
+
+  defp phrasing_content?({tag, _attrs, children}) do
+    tag = String.upcase(tag)
+
+    cond do
+      MapSet.member?(@phrasing_elems, tag) ->
+        true
+
+      tag in ["A", "DEL", "INS"] ->
+        Enum.all?(children, &phrasing_content?/1)
+
+      true ->
+        false
+    end
+  end
+
+  defp set_node_tag({_, attrs, children}, new_tag) do
+    {new_tag, attrs, children}
   end
 
   def strip_attributes_and_classes(nil, _preserve_classes), do: nil
@@ -1010,7 +1449,7 @@ defmodule ReadabilityEx.Cleaner do
               "rules",
               "valign",
               "vspace"
-            ]
+            ] or String.starts_with?(k, "data-readability-")
           end)
           |> drop_deprecated_size_attrs(tag)
           |> keep_only_preserved_classes(preserve_classes)
@@ -1077,7 +1516,10 @@ defmodule ReadabilityEx.Cleaner do
         node = {tag, [], children}
 
         has_media =
-          Floki.find(node, "img,video,audio,svg,iframe,object,embed,br") != []
+          case tag do
+            "p" -> Floki.find(node, "img,video,audio,svg,iframe,object,embed") != []
+            _ -> Floki.find(node, "img,video,audio,svg,iframe,object,embed,br") != []
+          end
 
         if has_media do
           false

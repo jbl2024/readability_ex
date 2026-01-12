@@ -91,7 +91,7 @@ areas, what is already aligned, and where gaps remain.
 
 - Sibling threshold + bonus + paragraph heuristics
   - Status: Partial
-  - Notes: Close to JS, but not identical on some branches.
+  - Notes: Close to JS, with extra sibling inclusion for lists/separators/media-only paragraphs.
 
 ## Post-processing
 
@@ -117,7 +117,7 @@ areas, what is already aligned, and where gaps remain.
     more global class stripping.
 
 - _markDataTables + _getRowAndColumnCount
-  - Status: Missing
+  - Status: Matched
 
 - _fixLazyImages
   - Status: Matched (close)
@@ -135,7 +135,7 @@ areas, what is already aligned, and where gaps remain.
   - Status: Missing
 
 - _cleanHeaders
-  - Status: Missing
+  - Status: Matched
 
 - H1 -> H2 replacement
   - Status: Matched
@@ -148,8 +148,7 @@ areas, what is already aligned, and where gaps remain.
   - Status: Missing
 
 - Single-cell tables (flatten)
-  - Status: Partial
-  - Notes: Elixir only flattens code tables; JS handles generic single-cell tables.
+  - Status: Matched
 
 ## Metadata
 
@@ -169,7 +168,7 @@ areas, what is already aligned, and where gaps remain.
 ## Title
 
 - _getArticleTitle
-  - Status: Matched (very close)
+  - Status: Matched (meta title precedence aligned)
 
 ## Paging / Multi-page
 
@@ -180,7 +179,7 @@ areas, what is already aligned, and where gaps remain.
 
 1. Data table detection + single-cell table flattening parity.
 2. _cleanMatchedNodes (share element removal).
-3. _cleanHeaders + remove <br> before <p>.
+3. remove <br> before <p>.
 4. JavaScript link conversion (text vs span handling).
 5. JSON-LD context/type validation and expanded types.
 6. Named HTML entity decoding.

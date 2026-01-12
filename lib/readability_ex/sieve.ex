@@ -9,18 +9,21 @@ defmodule ReadabilityEx.Sieve do
           integer(),
           binary(),
           boolean(),
+          binary(),
           keyword()
         ) ::
           {:ok, map()} | {:error, atom()}
-  def grab_article(state, _doc, flags, base_uri, absolute_fragments?, opts) do
-    {state, byline} =
+  def grab_article(state, _doc, flags, base_uri, absolute_fragments?, article_title, opts) do
+    state =
       state
       |> drop_hidden()
       |> drop_aria_roles()
       |> drop_modal_dialogs()
       |> maybe_strip_unlikely(flags)
       |> drop_empty_containers()
-      |> drop_bylines()
+
+    {state, byline} = drop_bylines(state)
+    state = drop_title_duplicates(state, article_title)
 
     state = score_candidates(state, flags)
     {top_id, top_candidates, state} = pick_top_candidate(state, opts)
@@ -39,11 +42,14 @@ defmodule ReadabilityEx.Sieve do
         cleaned =
           article_node
           |> Cleaner.remove_byline_nodes()
+          |> Cleaner.mark_data_tables()
           |> Cleaner.fix_lazy_images()
-          |> maybe_clean_conditionally(flags)
           |> Cleaner.remove_semantic_junk()
+          |> Cleaner.remove_title_headers(article_title)
+          |> Cleaner.clean_headers()
+          |> maybe_clean_conditionally(flags)
           |> Cleaner.wrap_continue_links()
-          |> Cleaner.flatten_code_tables()
+          |> Cleaner.flatten_tables()
           |> Cleaner.downgrade_h1()
           |> Cleaner.simplify_nested_elements()
           |> Cleaner.unwrap_content_main()
@@ -86,6 +92,50 @@ defmodule ReadabilityEx.Sieve do
       aria_modal == "true" and (n.role || "") |> String.downcase() == "dialog"
     end)
     |> Map.new()
+  end
+
+  defp drop_title_duplicates(state, title) do
+    title = (title || "") |> String.trim()
+
+    if title == "" do
+      state
+    else
+      matching =
+        state
+        |> Enum.filter(fn {_id, n} -> n.tag in ["h1", "h2"] end)
+        |> Enum.filter(fn {_id, n} -> text_similarity(title, n.text || "") > 0.75 end)
+
+      case matching do
+        [] ->
+          state
+
+        _ ->
+          {id, _} = Enum.min_by(matching, fn {id, _} -> id end)
+          Map.delete(state, id)
+      end
+    end
+  end
+
+  defp text_similarity(text_a, text_b) do
+    tokens_a = tokenize(text_a)
+    tokens_b = tokenize(text_b)
+    token_set_a = MapSet.new(tokens_a)
+
+    if tokens_a == [] or tokens_b == [] do
+      0.0
+    else
+      uniq_b = Enum.reject(tokens_b, &MapSet.member?(token_set_a, &1))
+      distance_b =
+        String.length(Enum.join(uniq_b, " ")) / max(1, String.length(Enum.join(tokens_b, " ")))
+
+      1.0 - distance_b
+    end
+  end
+
+  defp tokenize(text) do
+    text
+    |> String.downcase()
+    |> String.split(~r/\W+/u, trim: true)
   end
 
   defp maybe_strip_unlikely(state, flags) do
@@ -247,20 +297,21 @@ defmodule ReadabilityEx.Sieve do
               {:halt, {current_id, st, last}}
 
             parent ->
-              parent_score = parent.score
-
               cond do
                 parent.tag == "body" ->
                   {:halt, {current_id, st, last}}
 
-                parent_score < score_threshold ->
+                not parent.is_candidate ->
+                  {:cont, {current_id, st, last}}
+
+                parent.score < score_threshold ->
                   {:halt, {current_id, st, last}}
 
-                parent_score > last ->
-                  {:halt, {id, st, parent_score}}
+                parent.score > last ->
+                  {:halt, {id, st, parent.score}}
 
                 true ->
-                  {:cont, {current_id, st, parent_score}}
+                  {:cont, {current_id, st, parent.score}}
               end
           end
         end)
@@ -324,35 +375,10 @@ defmodule ReadabilityEx.Sieve do
     else
       kept =
         siblings
-        |> Enum.filter(fn sib ->
-          content_bonus =
-            if same_class?(sib, top) and (top.class || "") != "" do
-              top.score * 0.2
-            else
-              0.0
-            end
-
-          cond do
-            sib.id == top_id ->
-              true
-
-            sib.is_candidate and sib.score + content_bonus >= threshold ->
-              true
-
-            sib.tag == "p" and String.length(sib.text || "") > 80 and
-                (sib.link_density || 0.0) < 0.25 ->
-              true
-
-            sib.tag == "p" and String.length(sib.text || "") < 80 and
-              String.length(sib.text || "") > 0 and (sib.link_density || 0.0) == 0.0 and
-                String.match?(sib.text || "", ~r/\.( |$)/) ->
-              true
-
-            true ->
-              false
-          end
-        end)
-        |> Enum.map(fn sib ->
+        |> Enum.map(fn sib -> {sib, keep_sibling?(sib, top_id, top, threshold)} end)
+        |> keep_separator_siblings()
+        |> Enum.filter(fn {_sib, keep?} -> keep? end)
+        |> Enum.map(fn {sib, _} ->
           if alter_to_div?(sib.tag) do
             set_node_tag(sib.raw, "div")
           else
@@ -385,7 +411,78 @@ defmodule ReadabilityEx.Sieve do
   end
 
   defp alter_to_div?(tag) do
-    tag not in ["div", "article", "section", "p", "ol", "ul"]
+    tag not in ["div", "article", "section", "p", "ol", "ul", "blockquote", "hr", "b", "strong"]
+  end
+
+  defp keep_sibling?(sib, top_id, top, threshold) do
+    content_bonus =
+      if same_class?(sib, top) and (top.class || "") != "" do
+        top.score * 0.2
+      else
+        0.0
+      end
+
+    cond do
+      sib.id == top_id ->
+        true
+
+      sib.is_candidate and sib.score + content_bonus >= threshold ->
+        true
+
+      sib.tag in ["p", "ul", "ol"] and String.length(sib.text || "") > 80 and
+          (sib.link_density || 0.0) < 0.25 ->
+        true
+
+      sib.tag in ["p", "ul", "ol"] and String.length(sib.text || "") < 80 and
+        String.length(sib.text || "") > 0 and (sib.link_density || 0.0) == 0.0 and
+          String.match?(sib.text || "", ~r/[\.\?!]( |$)/) ->
+        true
+
+      sib.tag == "p" and String.length(sib.text || "") == 0 and has_media?(sib.raw) ->
+        true
+
+      sib.tag in ["b", "strong"] and String.length(sib.text || "") > 0 ->
+        true
+
+      sib.tag == "blockquote" and String.length(sib.text || "") > 0 ->
+        true
+
+      sib.tag == "hr" ->
+        true
+
+      true ->
+        false
+    end
+  end
+
+  defp keep_separator_siblings(siblings_with_flags) do
+    case Enum.find_index(siblings_with_flags, fn {_sib, keep?} -> keep? end) do
+      nil ->
+        siblings_with_flags
+
+      first_idx ->
+        last_idx =
+          siblings_with_flags
+          |> Enum.with_index()
+          |> Enum.reduce(first_idx, fn {{_sib, keep?}, idx}, acc ->
+            if keep?, do: idx, else: acc
+          end)
+
+        siblings_with_flags
+        |> Enum.with_index()
+        |> Enum.map(fn {{sib, keep?}, idx} ->
+          if keep? or
+               (idx >= first_idx and idx <= last_idx and sib.tag in ["hr", "b", "strong"]) do
+            {sib, true}
+          else
+            {sib, false}
+          end
+        end)
+    end
+  end
+
+  defp has_media?(node) do
+    Floki.find(node, "img,embed,object,iframe") != []
   end
 
   defp set_node_tag({_tag, attrs, children}, new_tag) do
