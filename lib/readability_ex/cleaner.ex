@@ -376,7 +376,7 @@ defmodule ReadabilityEx.Cleaner do
         data_component = attr(attrs, "data-component")
 
         if Regex.match?(
-             ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment|recirc|itemendrow|related-articles-module|most-popular-recircs|teads/i,
+             ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment|recirc|itemendrow|related-articles-module|most-popular-recircs|teads|caption-credit|post-meta/i,
              s
            ) or Regex.match?(~r/\btaboola\b/i, s) or data_component == "taboola" or
              String.starts_with?(attr(attrs, "id"), "twttr_") or
@@ -410,7 +410,14 @@ defmodule ReadabilityEx.Cleaner do
 
   def downgrade_h1(node) do
     Floki.traverse_and_update(node, fn
-      {"h1", attrs, children} -> {"h2", attrs, children}
+      {"h1", attrs, children} ->
+        itemprop = attr(attrs, "itemprop") |> String.downcase()
+
+        if String.contains?(itemprop, "headline") do
+          nil
+        else
+          {"h2", attrs, children}
+        end
       other -> other
     end)
   end

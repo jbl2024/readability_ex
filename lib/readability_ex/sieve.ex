@@ -202,25 +202,63 @@ defmodule ReadabilityEx.Sieve do
   end
 
   defp promote_content_ancestor(top_id, state) do
-    Stream.iterate(top_id, fn x -> state[x] && state[x].parent_id end)
-    |> Enum.reduce_while(top_id, fn id, _acc ->
-      case state[id] do
-        nil ->
-          {:halt, top_id}
+    chain =
+      Stream.iterate(top_id, fn x -> state[x] && state[x].parent_id end)
+      |> Enum.take_while(& &1)
 
-        node ->
-          if content_container?(node) do
-            {:halt, id}
-          else
-            {:cont, top_id}
-          end
-      end
-    end)
+    header_id =
+      Enum.find(chain, fn id ->
+        case state[id] do
+          nil -> false
+          node -> article_header_container?(node)
+        end
+      end)
+
+    if header_id do
+      header_id
+    else
+      Enum.reduce_while(chain, top_id, fn id, _acc ->
+        case state[id] do
+          nil ->
+            {:halt, top_id}
+
+          node ->
+            if content_container?(node) do
+              {:halt, id}
+            else
+              {:cont, top_id}
+            end
+        end
+      end)
+    end
   end
 
   defp content_container?(node) do
     node.tag in ["div", "section", "article", "main"] and
-      (node.id_attr == "content" or article_body_attr?(node) or content_class?(node))
+      (node.id_attr == "content" or article_body_attr?(node) or content_class?(node) or
+         article_header_container?(node))
+  end
+
+  defp article_header_container?(node) do
+    node.raw
+    |> Floki.find("header.article-header")
+    |> case do
+      [] -> false
+      _ -> has_article_body_descendant?(node.raw)
+    end
+  end
+
+  defp has_article_body_descendant?(raw) do
+    raw
+    |> Floki.find("[itemprop]")
+    |> Enum.any?(fn n ->
+      n
+      |> Floki.attribute("itemprop")
+      |> List.first()
+      |> to_string()
+      |> String.downcase()
+      |> String.contains?("articlebody")
+    end)
   end
 
   defp article_body_attr?(node) do

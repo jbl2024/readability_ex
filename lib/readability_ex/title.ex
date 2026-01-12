@@ -2,7 +2,7 @@ defmodule ReadabilityEx.Title do
   @moduledoc false
 
   # Common separators similar to Readability.js behavior
-  @seps ~r/\s[|\-»:–—]\s|[|\-»:–—]/
+  @seps ~r/\s[|»:–—-]\s|\s*\|\s*/
 
   def get_article_title(doc, meta, _opts) do
     meta_title = meta.title |> blank()
@@ -31,15 +31,9 @@ defmodule ReadabilityEx.Title do
 
   defp choose_side(raw) do
     # Prefer stripping site name at end; if too short, try other side.
-    cand1 =
-      raw
-      |> String.replace(~r/\s*[|\-»:–—]\s*[^|\-»:–—]+$/, "")
-      |> String.trim()
-
-    cand2 =
-      raw
-      |> String.replace(~r/^[^|\-»:–—]+\s*[|\-»:–—]\s*/, "")
-      |> String.trim()
+    parts = String.split(raw, ~r/\s*\|\s*|\s+[-–—:]\s+/)
+    cand1 = parts |> List.first() |> to_string() |> String.trim()
+    cand2 = parts |> List.last() |> to_string() |> String.trim()
 
     cond do
       word_count(cand1) >= 3 -> cand1
