@@ -15,7 +15,7 @@ defmodule ReadabilityEx.Title do
     end
   end
 
-  defp refine_title("", _doc), do: "Untitled"
+  defp refine_title("", _doc), do: ""
 
   defp refine_title(raw, doc) do
     best =

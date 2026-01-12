@@ -349,10 +349,10 @@ defmodule ReadabilityEx.Sieve do
             [node]
 
           _ ->
-            if all_structural_children?(kept) do
-              kept
-            else
-              [{"section", [], kept}]
+            cond do
+              all_structural_children?(kept) -> kept
+              all_text_children?(kept) -> kept
+              true -> [{"section", [], kept}]
             end
         end
 
@@ -387,6 +387,15 @@ defmodule ReadabilityEx.Sieve do
   end
 
   defp all_structural_children?(_), do: false
+
+  defp all_text_children?(children) when is_list(children) do
+    Enum.all?(children, fn
+      s when is_binary(s) -> String.trim(s) != ""
+      _ -> false
+    end)
+  end
+
+  defp all_text_children?(_), do: false
 
   defp promote_content_div([{"div", attrs, children}] = content) do
     if attr(attrs, "id") == "" and only_whitespace_children?(children) do

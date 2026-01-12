@@ -109,7 +109,8 @@ defmodule ReadabilityEx do
 
               true ->
                 meta.excerpt
-            end,
+            end
+            |> decode_html_entities(),
           byline: meta.byline || grab.byline,
           dir: meta.dir || grab.dir,
           siteName: meta.site_name,
@@ -139,6 +140,39 @@ defmodule ReadabilityEx do
         |> String.trim()
         |> String.slice(0, 200)
     end
+  end
+
+  defp decode_html_entities(nil), do: nil
+
+  defp decode_html_entities(text) when is_binary(text) do
+    Regex.replace(~r/&#x[0-9a-fA-F]+;|&#\d+;/, text, fn match ->
+      decode_numeric_entity(match)
+    end)
+  end
+
+  defp decode_numeric_entity("&#x" <> rest), do: decode_numeric_entity(rest, 16)
+  defp decode_numeric_entity("&#X" <> rest), do: decode_numeric_entity(rest, 16)
+  defp decode_numeric_entity("&#" <> rest), do: decode_numeric_entity(rest, 10)
+  defp decode_numeric_entity(other), do: other
+
+  defp decode_numeric_entity(rest, base) do
+    rest = String.trim_trailing(rest, ";")
+
+    case Integer.parse(rest, base) do
+      {value, ""} ->
+        if valid_codepoint?(value) do
+          <<value::utf8>>
+        else
+          "\uFFFD"
+        end
+
+      _ ->
+        "&#" <> rest <> ";"
+    end
+  end
+
+  defp valid_codepoint?(value) do
+    value > 0 and value <= 0x10FFFF and not (value in 0xD800..0xDFFF)
   end
 
   defp normalize_opts(opts) when is_map(opts), do: normalize_opts(Map.to_list(opts))
