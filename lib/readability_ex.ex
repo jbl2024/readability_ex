@@ -126,7 +126,7 @@ defmodule ReadabilityEx do
            |> Floki.find("p")
            |> Enum.find(fn node -> String.trim(Floki.text(node)) != "" end) do
       p
-      |> Floki.text()
+      |> text_content_no_br()
       |> String.trim()
     else
       _ ->
@@ -172,6 +172,17 @@ defmodule ReadabilityEx do
   defp valid_codepoint?(value) do
     value > 0 and value <= 0x10FFFF and value not in 0xD800..0xDFFF
   end
+
+  defp text_content_no_br({tag, _attrs, children}) when is_binary(tag) do
+    if String.downcase(tag) == "br" do
+      ""
+    else
+      Enum.map_join(children, "", &text_content_no_br/1)
+    end
+  end
+
+  defp text_content_no_br(text) when is_binary(text), do: text
+  defp text_content_no_br(_), do: ""
 
   defp normalize_opts(opts) when is_map(opts), do: normalize_opts(Map.to_list(opts))
 

@@ -64,11 +64,15 @@ defmodule ReadabilityEx.Constants do
     ~r/[,،﹐︐︑⸁⸴⸲，]/
   end
 
+  def default_char_threshold(), do: 500
+
   def re_ad_words(),
     do: ~r/^(ad(vertising|vertisement)?|pub(licité)?|werb(ung)?|广告|Реклама|Anuncio)$/iu
 
   def re_loading_words(),
     do: ~r/^((loading|正在加载|Загрузка|chargement|cargando)(…|\.\.\.)?)$/iu
+
+  def re_share_elements(), do: ~r/(\b|_)(share|sharedaddy)(\b|_)/i
 
   def lazy_src_attrs() do
     [

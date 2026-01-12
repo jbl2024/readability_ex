@@ -45,6 +45,7 @@ defmodule ReadabilityEx.Sieve do
           |> Cleaner.mark_data_tables()
           |> Cleaner.fix_lazy_images()
           |> Cleaner.remove_semantic_junk()
+          |> Cleaner.clean_share_elements(Constants.default_char_threshold())
           |> Cleaner.remove_title_headers(article_title)
           |> Cleaner.clean_headers()
           |> maybe_clean_conditionally(flags)
@@ -56,6 +57,7 @@ defmodule ReadabilityEx.Sieve do
           |> Cleaner.absolutize_uris(base_uri, absolute_fragments?)
           |> Cleaner.replace_javascript_links()
           |> Cleaner.remove_empty_nodes()
+          |> Cleaner.remove_br_before_p()
           |> Cleaner.simplify_nested_elements()
           |> Cleaner.strip_attributes_and_classes(opts[:preserve_classes])
 

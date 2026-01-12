@@ -132,7 +132,7 @@ areas, what is already aligned, and where gaps remain.
   - Notes: Elixir includes extra site-specific removal rules.
 
 - _cleanMatchedNodes (share elements)
-  - Status: Missing
+  - Status: Matched
 
 - _cleanHeaders
   - Status: Matched
@@ -145,7 +145,7 @@ areas, what is already aligned, and where gaps remain.
   - Notes: Elixir removes empty nodes differently than JS paragraph rule.
 
 - Remove <br> before <p>
-  - Status: Missing
+  - Status: Matched
 
 - Single-cell tables (flatten)
   - Status: Matched
@@ -177,9 +177,7 @@ areas, what is already aligned, and where gaps remain.
 
 ## High-impact Gaps (likely to affect fixtures)
 
-1. Data table detection + single-cell table flattening parity.
-2. _cleanMatchedNodes (share element removal).
-3. remove <br> before <p>.
-4. JavaScript link conversion (text vs span handling).
-5. JSON-LD context/type validation and expanded types.
-6. Named HTML entity decoding.
+1. JavaScript link conversion (text vs span handling).
+2. JSON-LD context/type validation and expanded types.
+3. Named HTML entity decoding.
+4. Paging / multi-page support.

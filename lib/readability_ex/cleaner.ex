@@ -375,27 +375,48 @@ defmodule ReadabilityEx.Cleaner do
   end
 
   defp br_children_to_paragraphs(children) when is_list(children) do
-    {out, current, _last_br?} =
-      Enum.reduce(children, {[], [], false}, fn child, {acc, cur, last_br} ->
+    {out, current, pending_br?} =
+      Enum.reduce(children, {[], [], false}, fn child, {acc, cur, pending_br} ->
         cond do
           match?({"br", _, _}, child) ->
-            if last_br do
+            if pending_br do
               {acc ++ maybe_paragraph(cur), [], false}
             else
               {acc, cur, true}
             end
 
           is_binary(child) ->
-            {acc, cur ++ [child], false}
+            if pending_br do
+              child =
+                if cur == [] and not String.starts_with?(child, [" ", "\n", "\t", "\r"]) do
+                  " " <> child
+                else
+                  child
+                end
+
+              cur =
+                if cur == [] do
+                  cur
+                else
+                  cur ++ [{"br", [], []}]
+                end
+
+              {acc, cur ++ [child], false}
+            else
+              {acc, cur ++ [child], false}
+            end
 
           block_node?(child) ->
+            cur = if pending_br, do: cur ++ [{"br", [], []}], else: cur
             {acc ++ maybe_paragraph(cur) ++ [child], [], false}
 
           true ->
+            cur = if pending_br, do: cur ++ [{"br", [], []}], else: cur
             {acc, cur ++ [child], false}
         end
       end)
 
+    current = if pending_br?, do: current ++ [{"br", [], []}], else: current
     out ++ maybe_paragraph(current)
   end
 
@@ -440,8 +461,25 @@ defmodule ReadabilityEx.Cleaner do
           x
       end)
       |> Enum.reject(&(&1 == ""))
+      |> drop_edge_brs()
 
     if cleaned == [], do: [], else: [{"p", [], cleaned}]
+  end
+
+  defp drop_edge_brs(children) do
+    children
+    |> drop_leading_brs()
+    |> drop_trailing_brs()
+  end
+
+  defp drop_leading_brs([{"br", _, _} | rest]), do: drop_leading_brs(rest)
+  defp drop_leading_brs(children), do: children
+
+  defp drop_trailing_brs(children) do
+    children
+    |> Enum.reverse()
+    |> drop_leading_brs()
+    |> Enum.reverse()
   end
 
   defp block_tag?(tag) do
@@ -775,6 +813,51 @@ defmodule ReadabilityEx.Cleaner do
         other
     end)
   end
+
+  def clean_share_elements(node, threshold) do
+    case node do
+      {tag, attrs, children} ->
+        cleaned_children =
+          children
+          |> Enum.map(fn
+            {ctag, cattrs, cchildren} ->
+              clean_share_node({ctag, cattrs, cchildren}, threshold)
+
+            other ->
+              other
+          end)
+          |> Enum.reject(&is_nil/1)
+
+        {tag, attrs, cleaned_children}
+
+      other ->
+        other
+    end
+  end
+
+  defp clean_share_node({tag, attrs, children}, threshold) do
+    cleaned_children =
+      children
+      |> Enum.map(fn
+        {ctag, cattrs, cchildren} = child ->
+          match_string = attr(cattrs, "class") <> " " <> attr(cattrs, "id")
+
+          if Regex.match?(Constants.re_share_elements(), match_string) and
+               String.length(String.trim(Floki.text(child))) < threshold do
+            nil
+          else
+            clean_share_node({ctag, cattrs, cchildren}, threshold)
+          end
+
+        other ->
+          other
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    {tag, attrs, cleaned_children}
+  end
+
+  defp clean_share_node(other, _threshold), do: other
 
   def remove_title_headers(node, title) do
     title = String.trim(title || "")
@@ -1501,6 +1584,46 @@ defmodule ReadabilityEx.Cleaner do
       other ->
         other
     end)
+  end
+
+  def remove_br_before_p(node) do
+    Floki.traverse_and_update(node, fn
+      {tag, attrs, children} ->
+        {tag, attrs, drop_br_before_p(children)}
+
+      other ->
+        other
+    end)
+  end
+
+  defp drop_br_before_p(children) when is_list(children) do
+    do_drop_br(children, [])
+  end
+
+  defp drop_br_before_p(children), do: children
+
+  defp do_drop_br([], acc), do: Enum.reverse(acc)
+
+  defp do_drop_br([{"br", _, _} = br | rest], acc) do
+    if next_non_whitespace_is_p?(rest) do
+      do_drop_br(rest, acc)
+    else
+      do_drop_br(rest, [br | acc])
+    end
+  end
+
+  defp do_drop_br([child | rest], acc), do: do_drop_br(rest, [child | acc])
+
+  defp next_non_whitespace_is_p?(children) do
+    children
+    |> Enum.find(fn
+      s when is_binary(s) -> String.trim(s) != ""
+      _ -> true
+    end)
+    |> case do
+      {"p", _, _} -> true
+      _ -> false
+    end
   end
 
   defp empty_node?(tag, attrs, children) do
