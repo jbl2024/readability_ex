@@ -140,13 +140,23 @@ defmodule ReadabilityEx.Cleaner do
         if has_block_children?(children) do
           node
         else
-          {"p", attrs, children}
+          {"p", attrs, ensure_leading_space(children)}
         end
 
       other ->
         other
     end)
   end
+
+  defp ensure_leading_space([text | rest]) when is_binary(text) do
+    if text == "" or String.starts_with?(text, [" ", "\n", "\t", "\r"]) do
+      [text | rest]
+    else
+      [" " <> text | rest]
+    end
+  end
+
+  defp ensure_leading_space(children), do: children
 
   defp has_block_children?(children) when is_list(children) do
     Enum.any?(children, fn
@@ -284,8 +294,15 @@ defmodule ReadabilityEx.Cleaner do
     cleaned =
       cur
       |> Enum.map(fn
-        s when is_binary(s) -> String.trim(s)
-        x -> x
+        s when is_binary(s) ->
+          if String.trim(s) == "" do
+            ""
+          else
+            s
+          end
+
+        x ->
+          x
       end)
       |> Enum.reject(&(&1 == ""))
 
@@ -391,6 +408,18 @@ defmodule ReadabilityEx.Cleaner do
       {tag, _attrs, _children}
       when tag in ["nav", "footer", "aside", "form", "iframe", "object", "embed"] ->
         nil
+
+      {tag, attrs, children} ->
+        s = attr(attrs, "class") <> " " <> attr(attrs, "id")
+
+        if Regex.match?(
+             ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment/i,
+             s
+           ) or String.starts_with?(attr(attrs, "id"), "twttr_") do
+          nil
+        else
+          {tag, attrs, children}
+        end
 
       other ->
         other
@@ -520,8 +549,13 @@ defmodule ReadabilityEx.Cleaner do
       {tag, attrs, children} when tag in ["div", "section"] ->
         cond do
           content_wrapper_with_single_child?(attrs, children) ->
-            {_ctag, _cattrs, cchildren} = hd(Enum.filter(children, &match?({_, _, _}, &1)))
-            {tag, attrs, cchildren}
+            [{_ctag, cattrs, cchildren}] = Enum.filter(children, &match?({_, _, _}, &1))
+
+            if attr(cattrs, "id") == "content-main" do
+              {"div", cattrs, cchildren}
+            else
+              {tag, attrs, cchildren}
+            end
 
           redundant_div_with_p?(tag, attrs, children) ->
             List.first(children)
@@ -543,6 +577,29 @@ defmodule ReadabilityEx.Cleaner do
             else
               {tag, attrs, children}
             end
+        end
+
+      other ->
+        other
+    end)
+  end
+
+  def unwrap_content_main(node) do
+    Floki.traverse_and_update(node, fn
+      {"div", attrs, children} ->
+        if attr(attrs, "id") == "content" do
+          case Enum.find(children, fn
+                 {"main", cattrs, _} -> attr(cattrs, "id") == "content-main"
+                 _ -> false
+               end) do
+            {"main", cattrs, cchildren} ->
+              {"div", cattrs, cchildren}
+
+            _ ->
+              {"div", attrs, children}
+          end
+        else
+          {"div", attrs, children}
         end
 
       other ->
@@ -581,7 +638,7 @@ defmodule ReadabilityEx.Cleaner do
     id_attr = attr(attrs, "id")
     class_attr = attr(attrs, "class")
 
-    id_attr in ["readability-page-1", "content"] or
+    id_attr in ["readability-page-1", "content", "article-content"] or
       String.split(class_attr, ~r/\s+/, trim: true) |> Enum.any?(&(&1 == "page"))
   end
 
@@ -590,12 +647,18 @@ defmodule ReadabilityEx.Cleaner do
   end
 
   defp redundant_div_with_p?(tag, attrs, children) do
-    tag == "div" and match?([{"p", _, _}], children) and attrs_removable?(attrs)
+    tag == "div" and not preserve_wrapper?(attrs) and only_whitespace_text?(children) and
+      attrs_redundant?(attrs) and
+      case Enum.filter(children, &match?({_, _, _}, &1)) do
+        [{"p", _, _}] -> true
+        _ -> false
+      end
   end
 
-  defp attrs_removable?(attrs) do
+  defp attrs_redundant?(attrs) do
     Enum.all?(attrs, fn {k, _v} ->
-      String.starts_with?(k, "data-") or String.starts_with?(k, "aria-") or k in ["role"]
+      k in ["class", "id", "role"] or String.starts_with?(k, "data-") or
+        String.starts_with?(k, "aria-")
     end)
   end
 
@@ -673,23 +736,23 @@ defmodule ReadabilityEx.Cleaner do
     if preserve_wrapper?(attrs) do
       false
     else
-    tag = String.downcase(tag)
-    text = children |> Floki.text() |> String.trim()
+      tag = String.downcase(tag)
+      text = children |> Floki.text() |> String.trim()
 
-    if text != "" do
-      false
-    else
-      node = {tag, [], children}
-
-      has_media =
-        Floki.find(node, "img,video,audio,svg,iframe,object,embed") != []
-
-      if has_media do
+      if text != "" do
         false
       else
-        tag in ["p", "div", "section", "span"]
+        node = {tag, [], children}
+
+        has_media =
+          Floki.find(node, "img,video,audio,svg,iframe,object,embed") != []
+
+        if has_media do
+          false
+        else
+          tag in ["p", "div", "section", "span"]
+        end
       end
-    end
     end
   end
 

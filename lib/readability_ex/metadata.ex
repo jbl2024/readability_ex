@@ -17,9 +17,9 @@ defmodule ReadabilityEx.Metadata do
       title: meta[:title] || jsonld[:title],
       excerpt: jsonld[:excerpt] || meta[:description],
       byline: meta[:author] || jsonld[:author],
-      site_name: meta[:site_name],
+      site_name: normalize_site_name(meta[:site_name]),
       lang: meta[:lang],
-      published_time: meta[:published_time] || jsonld[:published_time],
+      published_time: jsonld[:published_time] || meta[:published_time],
       dir: meta[:dir]
     }
   end
@@ -200,5 +200,30 @@ defmodule ReadabilityEx.Metadata do
   defp blank_to_nil(s) when is_binary(s) do
     s = String.trim(s)
     if s == "", do: nil, else: s
+  end
+
+  defp normalize_site_name(nil), do: nil
+
+  defp normalize_site_name(name) when is_binary(name) do
+    name = String.trim(name)
+
+    if name == "" do
+      nil
+    else
+      if Regex.match?(~r/\s[|\-»:–—]\s|[|\-»:–—]/, name) do
+        left =
+          name
+          |> String.replace(~r/\s*[|\-»:–—]\s*.+$/, "")
+          |> String.trim()
+
+        if String.contains?(left, ".") do
+          left
+        else
+          name
+        end
+      else
+        name
+      end
+    end
   end
 end

@@ -37,6 +37,7 @@ defmodule ReadabilityEx.Sieve do
           |> Cleaner.flatten_code_tables()
           |> Cleaner.downgrade_h1()
           |> Cleaner.simplify_nested_elements()
+          |> Cleaner.unwrap_content_main()
           |> Cleaner.absolutize_uris(base_uri, absolute_fragments?)
           |> Cleaner.replace_javascript_links()
           |> Cleaner.remove_empty_nodes()
@@ -383,9 +384,17 @@ defmodule ReadabilityEx.Sieve do
   defp siblings_of(id, state) do
     pid = state[id].parent_id
 
-    state
-    |> Map.values()
-    |> Enum.filter(fn n -> n.parent_id == pid end)
+    case state[pid] do
+      nil ->
+        state
+        |> Map.values()
+        |> Enum.filter(fn n -> n.parent_id == pid end)
+
+      parent ->
+        parent.child_ids
+        |> Enum.map(&state[&1])
+        |> Enum.reject(&is_nil/1)
+    end
   end
 
   defp maybe_clean_conditionally(node, flags) do

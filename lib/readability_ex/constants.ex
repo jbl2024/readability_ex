@@ -54,7 +54,7 @@ defmodule ReadabilityEx.Constants do
 
   def re_unlikely(),
     do:
-      ~r/combx|comment|community|disqus|extra|foot|header|menu|modal|nav|remark|rss|shoutbox|sidebar|sponsor|shopping|tags|tool|widget/i
+      ~r/combx|comment|community|disqus|extra|foot|header|menu|modal|nav|remark|rss|shoutbox|sidebar|sponsor|shopping|tags|tool|widget|related|share|social|photo/i
 
   def re_ok_maybe(),
     do: ~r/article|body|content|entry|hentry|main|page|pagination|post|text|blog|story/i

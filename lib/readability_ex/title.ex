@@ -8,7 +8,7 @@ defmodule ReadabilityEx.Title do
     meta_title = meta.title |> blank()
 
     if meta_title != "" do
-      meta_title
+      refine_title(meta_title, doc)
     else
       raw = doc |> Floki.find("title") |> Floki.text() |> String.trim()
       refine_title(raw, doc)
