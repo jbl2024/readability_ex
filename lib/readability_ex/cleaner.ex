@@ -86,7 +86,7 @@ defmodule ReadabilityEx.Cleaner do
   end
 
   def remove_scripts(doc) do
-    Floki.filter_out(doc, "script, style, iframe, link[rel='preload'][as='script'], noscript")
+    Floki.filter_out(doc, "script, style, link[rel='preload'][as='script'], noscript")
   end
 
   def prep_document(doc) do
@@ -368,7 +368,7 @@ defmodule ReadabilityEx.Cleaner do
   def remove_semantic_junk(node) do
     Floki.traverse_and_update(node, fn
       {tag, _attrs, _children}
-      when tag in ["nav", "footer", "aside", "form", "iframe", "object", "embed"] ->
+      when tag in ["nav", "footer", "aside", "form", "object", "embed"] ->
         nil
 
       {tag, attrs, children} ->
@@ -376,7 +376,7 @@ defmodule ReadabilityEx.Cleaner do
         data_component = attr(attrs, "data-component")
 
         if Regex.match?(
-             ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment|recirc|itemendrow|related-articles-module|most-popular-recircs|teads|caption-credit|post-meta/i,
+             ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment|recirc|itemendrow|related-articles-module|most-popular-recircs|teads|caption-credit|post-meta|bloc_signature/i,
              s
            ) or Regex.match?(~r/\btaboola\b/i, s) or data_component == "taboola" or
              String.starts_with?(attr(attrs, "id"), "twttr_") or
@@ -827,7 +827,7 @@ defmodule ReadabilityEx.Cleaner do
         end
 
       String.starts_with?(url, "//") ->
-        (base.scheme || "https") <> ":" <> url
+        url
 
       true ->
         URI.merge(base, u) |> URI.to_string()

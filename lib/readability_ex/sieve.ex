@@ -492,6 +492,15 @@ defmodule ReadabilityEx.Sieve do
       negative_or_unlikely?(s) ->
         nil
 
+      itemprop_author?(attrs) or Regex.match?(~r/\bauteur\b/i, s) ->
+        text =
+          node
+          |> Floki.text()
+          |> String.trim()
+          |> String.replace(~r/\s*[\-–—]+$/, "")
+
+        if String.length(text) in 3..120, do: text, else: nil
+
       rel_author?(attrs) ->
         text =
           node
@@ -533,6 +542,14 @@ defmodule ReadabilityEx.Sieve do
     |> String.downcase()
     |> String.split(~r/\s+/)
     |> Enum.any?(&(&1 == "author"))
+  end
+
+  defp itemprop_author?(attrs) do
+    attrs
+    |> attr("itemprop")
+    |> String.downcase()
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.any?(&String.contains?(&1, "author"))
   end
 
   defp attr(attrs, k), do: (List.keyfind(attrs, k, 0) || {k, ""}) |> elem(1)

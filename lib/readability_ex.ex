@@ -133,13 +133,17 @@ defmodule ReadabilityEx do
       p
       |> Floki.text()
       |> String.trim()
-      |> String.slice(0, 200)
     else
       _ ->
         text
         |> String.trim()
-        |> String.slice(0, 200)
+        |> full_or_truncated()
     end
+  end
+
+
+  defp full_or_truncated(text) when is_binary(text) do
+    if String.length(text) <= 200, do: text, else: String.slice(text, 0, 200)
   end
 
   defp decode_html_entities(nil), do: nil
