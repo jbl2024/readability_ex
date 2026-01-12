@@ -42,11 +42,44 @@ defmodule ReadabilityEx.Metadata do
 
   defp get_meta(doc) do
     %{
-      title: meta_content(doc, ["og:title", "twitter:title", "parsely-title"]),
-      description: meta_content(doc, ["og:description", "twitter:description", "description"]),
-      author: meta_content(doc, ["author", "parsely-author", "article:author"]),
+      title:
+        meta_content(doc, [
+          "dc:title",
+          "DC.title",
+          "dcterms.title",
+          "DCTERMS.title",
+          "parsely-title",
+          "og:title",
+          "twitter:title",
+          "title"
+        ]),
+      description:
+        meta_content(doc, [
+          "dc:description",
+          "DC.description",
+          "dcterms.description",
+          "DCTERMS.description",
+          "og:description",
+          "twitter:description",
+          "description"
+        ]),
+      author:
+        meta_content(doc, [
+          "dc:creator",
+          "DC.creator",
+          "dcterms.creator",
+          "DCTERMS.creator",
+          "author",
+          "parsely-author",
+          "article:author"
+        ]),
       site_name: meta_content(doc, ["og:site_name"]),
-      published_time: meta_content(doc, ["article:published_time", "og:published_time"]),
+      published_time:
+        meta_content(doc, [
+          "article:published_time",
+          "og:published_time",
+          "parsely-pub-date"
+        ]),
       lang: Floki.attribute(doc, "html", "lang") |> List.first() |> blank_to_nil(),
       dir: Floki.attribute(doc, "html", "dir") |> List.first() |> blank_to_nil()
     }
@@ -55,7 +88,7 @@ defmodule ReadabilityEx.Metadata do
   defp meta_content(doc, keys) do
     keys
     |> Enum.map(fn k ->
-      Floki.find(doc, "meta[property='#{k}'], meta[name='#{k}']")
+      Floki.find(doc, "meta[property='#{k}'], meta[name='#{k}'], meta[itemprop='#{k}']")
       |> Floki.attribute("content")
       |> List.first()
       |> blank_to_nil()

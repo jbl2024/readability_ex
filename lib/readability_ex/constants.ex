@@ -11,6 +11,8 @@ defmodule ReadabilityEx.Constants do
 
   def flag_no_strip_unlikelys(), do: bor(@flag_weight_classes, @flag_clean_conditionally)
   def flag_only_clean_conditionally(), do: @flag_clean_conditionally
+  def flag_no_weight_classes(), do: bor(@flag_strip_unlikelys, @flag_clean_conditionally)
+  def flag_no_clean_conditionally(), do: bor(@flag_strip_unlikelys, @flag_weight_classes)
 
   def flag_strip_unlikelys(), do: @flag_strip_unlikelys
   def flag_weight_classes(), do: @flag_weight_classes
@@ -33,6 +35,7 @@ defmodule ReadabilityEx.Constants do
       "menubar",
       "complementary",
       "navigation",
+      "note",
       "alert",
       "alertdialog",
       "dialog",

@@ -91,8 +91,103 @@ defmodule ReadabilityEx.Cleaner do
 
   def prep_document(doc) do
     doc
+    |> remove_comments()
+    |> replace_font_tags()
     |> replace_brbr_with_p()
+    |> remove_redundant_brs()
+    |> convert_divs_to_paragraphs()
     |> fix_lazy_images()
+  end
+
+  defp replace_font_tags(doc) do
+    Floki.traverse_and_update(doc, fn
+      {"font", attrs, children} -> {"span", attrs, children}
+      other -> other
+    end)
+  end
+
+  defp remove_redundant_brs(doc) do
+    Floki.traverse_and_update(doc, fn
+      {tag, attrs, children} when tag in ["div", "section", "article"] ->
+        if Enum.any?(children, &match?({"p", _, _}, &1)) do
+          new_children =
+            Enum.reject(children, fn
+              {"br", _, _} -> true
+              _ -> false
+            end)
+
+          {tag, attrs, new_children}
+        else
+          {tag, attrs, children}
+        end
+
+      other ->
+        other
+    end)
+  end
+
+  def remove_comments(doc) do
+    Floki.traverse_and_update(doc, fn
+      {:comment, _} -> nil
+      {:comment, _, _} -> nil
+      other -> other
+    end)
+  end
+
+  defp convert_divs_to_paragraphs(doc) do
+    Floki.traverse_and_update(doc, fn
+      {"div", attrs, children} = node ->
+        if has_block_children?(children) do
+          node
+        else
+          {"p", attrs, children}
+        end
+
+      other ->
+        other
+    end)
+  end
+
+  defp has_block_children?(children) when is_list(children) do
+    Enum.any?(children, fn
+      {tag, _attrs, _kids} ->
+        String.downcase(tag) in [
+          "address",
+          "article",
+          "aside",
+          "blockquote",
+          "canvas",
+          "details",
+          "div",
+          "dl",
+          "fieldset",
+          "figcaption",
+          "figure",
+          "footer",
+          "form",
+          "h1",
+          "h2",
+          "h3",
+          "h4",
+          "h5",
+          "h6",
+          "header",
+          "hgroup",
+          "hr",
+          "main",
+          "menu",
+          "nav",
+          "ol",
+          "p",
+          "pre",
+          "section",
+          "table",
+          "ul"
+        ]
+
+      _ ->
+        false
+    end)
   end
 
   defp replace_brbr_with_p(doc) do
@@ -277,7 +372,7 @@ defmodule ReadabilityEx.Cleaner do
 
   def remove_semantic_junk(node) do
     Floki.traverse_and_update(node, fn
-      {tag, _attrs, _children} when tag in ["header", "nav", "footer", "aside", "form", "iframe", "object", "embed"] ->
+      {tag, _attrs, _children} when tag in ["nav", "footer", "aside", "form", "iframe", "object", "embed"] ->
         nil
 
       other ->
@@ -285,14 +380,63 @@ defmodule ReadabilityEx.Cleaner do
     end)
   end
 
+  def downgrade_h1(node) do
+    Floki.traverse_and_update(node, fn
+      {"h1", attrs, children} -> {"h2", attrs, children}
+      other -> other
+    end)
+  end
+
   defp should_drop_conditionally?(node) do
     text = Floki.text(node) |> String.trim()
+    weight = class_weight(node)
+    content_score = content_score(node)
 
     cond do
+      weight + content_score < 0 -> true
       text != "" and Regex.match?(Constants.re_ad_words(), text) -> true
       text != "" and Regex.match?(Constants.re_loading_words(), text) -> true
       true -> shady_metrics_drop?(node)
     end
+  end
+
+  defp class_weight(node) do
+    {tag, attrs, _children} = node
+    class = attr(attrs, "class")
+    id_attr = attr(attrs, "id")
+
+    base =
+      case String.downcase(tag) do
+        "div" -> 5
+        "pre" -> 3
+        "td" -> 3
+        "blockquote" -> 3
+        "address" -> -3
+        "ol" -> -3
+        "ul" -> -3
+        "dl" -> -3
+        "dd" -> -3
+        "dt" -> -3
+        "li" -> -3
+        "form" -> -3
+        "h1" -> -5
+        "h2" -> -5
+        "h3" -> -5
+        "h4" -> -5
+        "h5" -> -5
+        "h6" -> -5
+        "th" -> -5
+        _ -> 0
+      end
+
+    base + ReadabilityEx.Metrics.class_weight(class, id_attr)
+  end
+
+  defp content_score(node) do
+    text = Floki.text(node)
+    comma_segments = text |> String.split(Constants.re_commas()) |> length()
+    len_bonus = min(text |> String.length() |> Kernel./(100) |> Float.floor(), 3.0)
+    1.0 + comma_segments + len_bonus
   end
 
   defp shady_metrics_drop?(node) do
@@ -317,18 +461,25 @@ defmodule ReadabilityEx.Cleaner do
 
       p_count = node |> Floki.find("p") |> length()
       img_count = node |> Floki.find("img") |> length()
+      svg_count = node |> Floki.find("svg") |> length()
+      media_count = img_count + svg_count
       li_count = node |> Floki.find("li") |> length()
+      input_count = node |> Floki.find("input") |> length()
 
       cond do
         heading_ratio > 0.4 -> true
+        link_density > 0.2 and tlen < 25 -> true
         link_density > 0.5 -> true
-        p_count == 0 and img_count > 1 -> true
-        p_count > 0 and img_count / p_count > 2.0 -> true
-        p_count == 0 and li_count > 20 -> true
+        p_count == 0 and media_count > 1 -> true
+        p_count > 0 and media_count / p_count > 2.0 -> true
+        (li_count > p_count and tag_name(node) not in ["ul", "ol"]) -> true
+        input_count > p_count / 3 -> true
         true -> false
       end
     end
   end
+
+  defp tag_name({tag, _attrs, _children}), do: String.downcase(tag)
 
   def simplify_nested_elements(node) do
     Floki.traverse_and_update(node, fn
@@ -391,6 +542,60 @@ defmodule ReadabilityEx.Cleaner do
     end)
   end
 
+  def replace_javascript_links(node) do
+    Floki.traverse_and_update(node, fn
+      {"a", attrs, children} ->
+        href = attr(attrs, "href") |> String.trim()
+
+        if href == "" or String.match?(href, ~r/^javascript:/i) do
+          {"span", [], children}
+        else
+          {"a", attrs, children}
+        end
+
+      other ->
+        other
+    end)
+  end
+
+  def remove_empty_nodes(node) do
+    Floki.traverse_and_update(node, fn
+      {tag, attrs, children} ->
+        if empty_node?(tag, children) do
+          nil
+        else
+          {tag, attrs, children}
+        end
+
+      other ->
+        other
+    end)
+  end
+
+  defp empty_node?(tag, children) do
+    tag = String.downcase(tag)
+    text = children |> Floki.text() |> String.trim()
+
+    if text != "" do
+      false
+    else
+      has_media =
+        Enum.any?(children, fn
+          {ctag, _, _} ->
+            String.downcase(ctag) in ["img", "video", "audio", "svg", "iframe", "object", "embed"]
+
+          _ ->
+            false
+        end)
+
+      if has_media do
+        false
+      else
+        tag in ["p", "div", "section", "span"]
+      end
+    end
+  end
+
   defp keep_only_preserved_classes(attrs, preserve) do
     case List.keyfind(attrs, "class", 0) do
       {"class", v} ->
@@ -410,7 +615,7 @@ defmodule ReadabilityEx.Cleaner do
     end
   end
 
-  def absolutize_uris(node, base_uri) do
+  def absolutize_uris(node, base_uri, absolute_fragments?) do
     if base_uri in [nil, ""] do
       node
     else
@@ -420,9 +625,9 @@ defmodule ReadabilityEx.Cleaner do
         {tag, attrs, children} ->
           attrs =
             attrs
-            |> abs_attr("href", base)
-            |> abs_attr("src", base)
-            |> abs_attr("poster", base)
+            |> abs_attr("href", base, absolute_fragments?)
+            |> abs_attr("src", base, true)
+            |> abs_attr("poster", base, true)
             |> abs_srcset(base)
 
           {tag, attrs, children}
@@ -433,10 +638,14 @@ defmodule ReadabilityEx.Cleaner do
     end
   end
 
-  defp abs_attr(attrs, k, base) do
+  defp abs_attr(attrs, k, base, absolute_fragments?) do
     case List.keyfind(attrs, k, 0) do
       {^k, v} when is_binary(v) and v != "" ->
-        List.keystore(attrs, k, 0, {k, to_abs(v, base)})
+        if should_absolutize?(k, v, absolute_fragments?) do
+          List.keystore(attrs, k, 0, {k, to_abs(v, base)})
+        else
+          attrs
+        end
 
       _ ->
         attrs
@@ -467,8 +676,12 @@ defmodule ReadabilityEx.Cleaner do
 
   defp to_abs(url, base) do
     u = URI.parse(url)
+    base = if base.path in [nil, ""], do: %{base | path: "/"}, else: base
 
     cond do
+      u.scheme in ["mailto", "tel", "data", "javascript", "about"] ->
+        url
+
       u.scheme in ["http", "https"] ->
         if (u.path in [nil, ""]) and is_nil(u.query) and is_nil(u.fragment) do
           url <> "/"
@@ -477,6 +690,19 @@ defmodule ReadabilityEx.Cleaner do
         end
       String.starts_with?(url, "//") -> (base.scheme || "https") <> ":" <> url
       true -> URI.merge(base, u) |> URI.to_string()
+    end
+  end
+
+  defp should_absolutize?(k, v, absolute_fragments?) do
+    cond do
+      String.starts_with?(v, "#") and k == "href" ->
+        absolute_fragments?
+
+      String.match?(v, ~r/^(mailto|tel|data|javascript|about):/i) ->
+        false
+
+      true ->
+        true
     end
   end
 

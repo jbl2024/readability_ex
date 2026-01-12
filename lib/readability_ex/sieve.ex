@@ -3,9 +3,9 @@ defmodule ReadabilityEx.Sieve do
 
   alias ReadabilityEx.{Cleaner, Constants, Metadata, Metrics}
 
-  @spec grab_article(map(), Floki.html_tree(), integer(), binary(), keyword()) ::
+  @spec grab_article(map(), Floki.html_tree(), integer(), binary(), boolean(), keyword()) ::
           {:ok, map()} | {:error, atom()}
-  def grab_article(state, _doc, flags, base_uri, opts) do
+  def grab_article(state, _doc, flags, base_uri, absolute_fragments?, opts) do
     state =
       state
       |> drop_hidden()
@@ -30,8 +30,11 @@ defmodule ReadabilityEx.Sieve do
           |> maybe_clean_conditionally(flags)
           |> Cleaner.remove_semantic_junk()
           |> Cleaner.flatten_code_tables()
+          |> Cleaner.downgrade_h1()
           |> Cleaner.simplify_nested_elements()
-          |> Cleaner.absolutize_uris(base_uri)
+          |> Cleaner.absolutize_uris(base_uri, absolute_fragments?)
+          |> Cleaner.replace_javascript_links()
+          |> Cleaner.remove_empty_nodes()
           |> Cleaner.strip_attributes_and_classes(opts[:preserve_classes])
 
         {:ok,
@@ -135,14 +138,23 @@ defmodule ReadabilityEx.Sieve do
   defp pick_top_candidate(state) do
     top =
       state
-      |> Enum.reject(fn {_id, n} -> n.tag in ["html", "body"] end)
+      |> Enum.reject(fn {_id, n} -> n.tag in ["html", "body", "head"] end)
       |> Enum.map(fn {id, n} ->
         final = n.score * (1.0 - (n.link_density || 0.0))
         {id, final}
       end)
       |> Enum.max_by(fn {_id, s} -> s end, fn -> {nil, 0.0} end)
+    {top_id, top_score} = top
 
-    {elem(top, 0), state}
+    if top_score > 0.0 do
+      {top_id, state}
+    else
+      body_id =
+        state
+        |> Enum.find_value(fn {id, n} -> if n.tag == "body", do: id, else: nil end)
+
+      {body_id || top_id, state}
+    end
   end
 
   defp promote_common_ancestor(top_id, state) do
@@ -210,42 +222,42 @@ defmodule ReadabilityEx.Sieve do
     threshold = max(10.0, top_final * 0.2)
 
     kept =
-      siblings
-      |> Enum.filter(fn sib ->
-        cond do
-          sib.id == top_id ->
-            true
+      if top.tag == "body" do
+        {_tag, _attrs, children} = top.raw
+        children
+      else
+        siblings
+        |> Enum.filter(fn sib ->
+          cond do
+            sib.id == top_id ->
+              true
 
-          sib.score >= threshold ->
-            true
+            sib.score >= threshold ->
+              true
 
-          same_class?(sib, top) ->
-            true
+            same_class?(sib, top) ->
+              true
 
-          sib.tag == "p" and String.length(sib.text || "") > 80 and
-              (sib.link_density || 0.0) < 0.25 ->
-            true
+            sib.tag == "p" and String.length(sib.text || "") > 80 and
+                (sib.link_density || 0.0) < 0.25 ->
+              true
 
-          true ->
-            false
-        end
-      end)
-      |> Enum.map(& &1.raw)
+            true ->
+              false
+          end
+        end)
+        |> Enum.map(& &1.raw)
+      end
 
     parent = state[top.parent_id]
 
-    if parent && top.tag == "article" and container_candidate?(parent) and
-         parent.tag in ["div", "section", "main"] do
+    if not is_nil(parent) and top.tag == "article" and
+         ((parent.tag == "main") or
+            (container_candidate?(parent) and parent.tag in ["div", "section", "main"])) do
       container = to_container_node(%{parent | raw: {parent.tag, parent.attrs, kept}})
       {"div", [{"id", "readability-page-1"}, {"class", "page"}], [container]}
     else
-      section =
-        case kept do
-          [{tag, _attrs, _children} = node] when tag in ["div", "article", "section"] -> node
-          _ -> {"section", [], kept}
-        end
-
-      {"div", [{"id", "readability-page-1"}, {"class", "page"}], [section]}
+      {"div", [{"id", "readability-page-1"}, {"class", "page"}], kept}
     end
   end
 

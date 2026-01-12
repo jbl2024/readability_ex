@@ -14,17 +14,6 @@ defmodule ReadabilityEx.Fixture002Test do
         base_uri: "http://fakehost"
       )
 
-    # ---- DEBUG OUTPUT (optionnel, mais très utile au début)
-    IO.puts("\n===== FIXTURE #{@fixture_id} =====")
-    IO.puts("\n--- RESULT TEXT ---\n")
-    IO.puts(result.textContent)
-
-    IO.puts("\n--- RESULT HTML ---\n")
-    IO.puts(result.content)
-
-    IO.puts("\n--- RESULT METADATA ---\n")
-    IO.inspect(result)
-
     # ---- HTML comparison (normalized)
     expected_html =
       fix.expected_html

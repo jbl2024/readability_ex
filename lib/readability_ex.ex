@@ -25,24 +25,45 @@ defmodule ReadabilityEx do
       |> Cleaner.remove_scripts()
       |> Cleaner.prep_document()
 
+    {base_uri, absolute_fragments?} = effective_base_uri(doc, base_uri)
+
     meta = Metadata.extract(doc, html)
     title = Title.get_article_title(doc, meta, opts)
 
     state = Index.build(doc)
 
     attempts = [
-      run_attempt(state, doc, meta, title, base_uri, Constants.flag_all(), opts),
-      run_attempt(state, doc, meta, title, base_uri, Constants.flag_no_strip_unlikelys(), opts),
+      run_attempt(state, doc, meta, title, base_uri, absolute_fragments?, Constants.flag_all(), opts),
       run_attempt(
         state,
         doc,
         meta,
         title,
         base_uri,
-        Constants.flag_only_clean_conditionally(),
+        absolute_fragments?,
+        Constants.flag_no_strip_unlikelys(),
         opts
       ),
-      run_attempt(state, doc, meta, title, base_uri, 0, opts)
+      run_attempt(
+        state,
+        doc,
+        meta,
+        title,
+        base_uri,
+        absolute_fragments?,
+        Constants.flag_no_weight_classes(),
+        opts
+      ),
+      run_attempt(
+        state,
+        doc,
+        meta,
+        title,
+        base_uri,
+        absolute_fragments?,
+        Constants.flag_no_clean_conditionally(),
+        opts
+      )
     ]
 
     best =
@@ -56,10 +77,10 @@ defmodule ReadabilityEx do
     end
   end
 
-  defp run_attempt(state, doc, meta, title, base_uri, flags, opts) do
+  defp run_attempt(state, doc, meta, title, base_uri, absolute_fragments?, flags, opts) do
     char_threshold = opts[:char_threshold]
 
-    case Sieve.grab_article(state, doc, flags, base_uri, opts) do
+    case Sieve.grab_article(state, doc, flags, base_uri, absolute_fragments?, opts) do
       {:ok, grab} ->
         text = grab.text
         best_ok = String.length(text) >= char_threshold
@@ -69,9 +90,9 @@ defmodule ReadabilityEx do
           content: grab.content_html,
           textContent: text,
           length: String.length(text),
-          excerpt: meta.excerpt || first_excerpt(text),
+          excerpt: meta.excerpt || first_excerpt(grab.content_html, text),
           byline: meta.byline || grab.byline,
-          dir: meta.dir || grab.dir || "ltr",
+          dir: meta.dir || grab.dir,
           siteName: meta.site_name,
           lang: meta.lang,
           publishedTime: meta.published_time,
@@ -83,10 +104,19 @@ defmodule ReadabilityEx do
     end
   end
 
-  defp first_excerpt(text) do
-    text
-    |> String.trim()
-    |> String.slice(0, 200)
+  defp first_excerpt(content_html, text) do
+    with {:ok, doc} <- Floki.parse_fragment(content_html),
+         [p | _] <- Floki.find(doc, "p") do
+      p
+      |> Floki.text()
+      |> String.trim()
+      |> String.slice(0, 200)
+    else
+      _ ->
+        text
+        |> String.trim()
+        |> String.slice(0, 200)
+    end
   end
 
   defp normalize_opts(opts) when is_map(opts), do: normalize_opts(Map.to_list(opts))
@@ -95,9 +125,26 @@ defmodule ReadabilityEx do
     defaults = [
       char_threshold: 500,
       base_uri: nil,
-      preserve_classes: MapSet.new(["page"])
+      preserve_classes: MapSet.new(["page", "caption", "OPEN", "CLOSE", "ORD"])
     ]
 
     Keyword.merge(defaults, opts)
+  end
+
+  defp effective_base_uri(doc, base_uri) do
+    base_href =
+      doc
+      |> Floki.find("base[href]")
+      |> Floki.attribute("href")
+      |> List.first()
+
+    if base_href && base_href != "" do
+      base = URI.parse(base_uri || "")
+      href = URI.parse(base_href)
+      merged = if base_uri in [nil, ""], do: href, else: URI.merge(base, href)
+      {URI.to_string(merged), true}
+    else
+      {base_uri, false}
+    end
   end
 end

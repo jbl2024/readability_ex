@@ -61,6 +61,7 @@ defmodule ReadabilityEx.Index do
 
     hidden =
       get_attr(attrs, "hidden") != "" or
+        String.downcase(get_attr(attrs, "aria-hidden")) == "true" or
         String.contains?(String.downcase(get_attr(attrs, "style")), "display:none") or
         String.contains?(String.downcase(get_attr(attrs, "style")), "visibility:hidden")
 
