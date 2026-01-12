@@ -209,13 +209,28 @@ defmodule ReadabilityEx.Sieve do
           {:halt, top_id}
 
         node ->
-          if node.id_attr == "content" and node.tag in ["div", "section", "article", "main"] do
+          if content_container?(node) do
             {:halt, id}
           else
             {:cont, top_id}
           end
       end
     end)
+  end
+
+  defp content_container?(node) do
+    node.tag in ["div", "section", "article", "main"] and
+      (node.id_attr == "content" or article_body_attr?(node) or content_class?(node))
+  end
+
+  defp article_body_attr?(node) do
+    itemprop = attr(node.attrs, "itemprop") |> String.downcase()
+    String.contains?(itemprop, "articlebody")
+  end
+
+  defp content_class?(node) do
+    s = (node.class || "") <> " " <> (node.id_attr || "")
+    Regex.match?(~r/\bpost-body\b|\bentry-content\b|\barticle-body\b|\barticlebody\b/i, s)
   end
 
   defp ancestor_chain(id, state) do

@@ -160,85 +160,19 @@ defmodule ReadabilityEx.Cleaner do
 
   defp has_block_children?(children) when is_list(children) do
     Enum.any?(children, fn
-      {tag, _attrs, _kids} ->
-        String.downcase(tag) in [
-          "address",
-          "article",
-          "aside",
-          "blockquote",
-          "canvas",
-          "details",
-          "div",
-          "dl",
-          "fieldset",
-          "figcaption",
-          "figure",
-          "footer",
-          "form",
-          "h1",
-          "h2",
-          "h3",
-          "h4",
-          "h5",
-          "h6",
-          "header",
-          "hgroup",
-          "hr",
-          "main",
-          "menu",
-          "nav",
-          "ol",
-          "p",
-          "pre",
-          "section",
-          "table",
-          "ul"
-        ]
-
-      _ ->
-        false
+      {tag, _attrs, _kids} -> block_tag?(tag)
+      _ -> false
     end)
   end
 
   defp replace_brbr_with_p(doc) do
-    # Convert sequences of <br><br> into <p> blocks in a pragmatic way.
-    # This is a simplified but deterministic transform: split text runs around double BR.
+    # Convert sequences of <br><br> into <p> blocks, preserving block-level children.
     Floki.traverse_and_update(doc, fn
       {tag, attrs, children} when tag in ["div", "section", "article"] ->
-        has_block_children =
-          Enum.any?(children, fn
-            {ctag, _, _} ->
-              String.downcase(ctag) in [
-                "p",
-                "div",
-                "section",
-                "article",
-                "pre",
-                "blockquote",
-                "figure",
-                "ul",
-                "ol",
-                "table",
-                "h1",
-                "h2",
-                "h3",
-                "h4",
-                "h5",
-                "h6"
-              ]
-
-            _ ->
-              false
-          end)
-
-        if has_block_children do
+        if has_p_children?(children) do
           {tag, attrs, children}
         else
-          new_children =
-            children
-            |> normalize_br(children_to_tokens())
-            |> tokens_to_paragraph_nodes()
-
+          new_children = br_children_to_paragraphs(children)
           {tag, attrs, new_children}
         end
 
@@ -247,52 +181,44 @@ defmodule ReadabilityEx.Cleaner do
     end)
   end
 
-  defp children_to_tokens() do
-    fn children ->
-      Enum.map(children, fn
-        {"br", _, _} -> {:br}
-        x when is_binary(x) -> {:text, x}
-        node -> {:node, node}
-      end)
-    end
-  end
-
-  defp normalize_br(children, mapper) when is_list(children) do
-    mapper.(children)
-  end
-
-  defp tokens_to_paragraph_nodes(tokens) do
-    # Break on consecutive BR
-    {paras, current, _last_br?} =
-      Enum.reduce(tokens, {[], [], false}, fn t, {ps, cur, last_br} ->
-        case t do
-          {:br} ->
-            if last_br do
-              ps = push_para(ps, cur)
-              {ps, [], false}
-            else
-              {ps, cur, true}
-            end
-
-          {:text, s} ->
-            {ps, cur ++ [s], false}
-
-          {:node, n} ->
-            {ps, cur ++ [n], false}
-        end
-      end)
-
-    paras = push_para(paras, current)
-
-    Enum.flat_map(paras, fn
-      [] -> []
-      pchildren -> [{"p", [], pchildren}]
+  defp has_p_children?(children) when is_list(children) do
+    Enum.any?(children, fn
+      {"p", _, _} -> true
+      _ -> false
     end)
   end
 
-  defp push_para(ps, cur) do
+  defp br_children_to_paragraphs(children) when is_list(children) do
+    {out, current, _last_br?} =
+      Enum.reduce(children, {[], [], false}, fn child, {acc, cur, last_br} ->
+        cond do
+          match?({"br", _, _}, child) ->
+            if last_br do
+              {acc ++ maybe_paragraph(cur), [], false}
+            else
+              {acc, cur, true}
+            end
+
+          is_binary(child) ->
+            {acc, cur ++ [child], false}
+
+          block_node?(child) ->
+            {acc ++ maybe_paragraph(cur) ++ [child], [], false}
+
+          true ->
+            {acc, cur ++ [child], false}
+        end
+      end)
+
+    out ++ maybe_paragraph(current)
+  end
+
+  defp block_node?({tag, _attrs, _kids}), do: block_tag?(tag)
+  defp block_node?(_), do: false
+
+  defp maybe_paragraph(children) do
     cleaned =
-      cur
+      children
       |> Enum.map(fn
         s when is_binary(s) ->
           if String.trim(s) == "" do
@@ -306,7 +232,43 @@ defmodule ReadabilityEx.Cleaner do
       end)
       |> Enum.reject(&(&1 == ""))
 
-    if cleaned == [], do: ps, else: ps ++ [cleaned]
+    if cleaned == [], do: [], else: [{"p", [], cleaned}]
+  end
+
+  defp block_tag?(tag) do
+    String.downcase(tag) in [
+      "address",
+      "article",
+      "aside",
+      "blockquote",
+      "canvas",
+      "details",
+      "div",
+      "dl",
+      "fieldset",
+      "figcaption",
+      "figure",
+      "footer",
+      "form",
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "h5",
+      "h6",
+      "header",
+      "hgroup",
+      "hr",
+      "main",
+      "menu",
+      "nav",
+      "ol",
+      "p",
+      "pre",
+      "section",
+      "table",
+      "ul"
+    ]
   end
 
   def fix_lazy_images(doc) do
@@ -533,9 +495,9 @@ defmodule ReadabilityEx.Cleaner do
         heading_ratio > 0.4 -> true
         link_density > 0.2 and tlen < 25 -> true
         link_density > 0.5 -> true
-        p_count == 0 and media_count > 1 -> true
-        p_count > 0 and media_count / p_count > 2.0 -> true
-        li_count > p_count and tag_name(node) not in ["ul", "ol"] -> true
+        p_count == 0 and media_count > 1 and tlen < 200 -> true
+        p_count > 0 and media_count / p_count > 2.0 and tlen < 1000 -> true
+        li_count > p_count and tag_name(node) not in ["ul", "ol"] and tlen < 1000 -> true
         input_count > p_count / 3 -> true
         true -> false
       end
@@ -692,7 +654,9 @@ defmodule ReadabilityEx.Cleaner do
       {tag, attrs, children} ->
         attrs =
           attrs
-          |> Enum.reject(fn {k, _} -> k in ["style", "align", "bgcolor", "valign", "border"] end)
+          |> Enum.reject(fn {k, _} ->
+            k in ["style", "align", "bgcolor", "valign", "border", "cellpadding", "cellspacing"]
+          end)
           |> keep_only_preserved_classes(preserve_classes)
 
         {tag, attrs, children}
