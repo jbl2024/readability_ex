@@ -24,6 +24,7 @@ defmodule ReadabilityEx.Metadata do
       published_time: jsonld[:published_time] || meta[:published_time],
       dir: meta[:dir]
     }
+    |> unescape_metadata_entities()
   end
 
   def get_direction(top_id, state) do
@@ -196,6 +197,57 @@ defmodule ReadabilityEx.Metadata do
 
   defp pick_best_jsonld(list) do
     Enum.find(list, &(&1[:title] && &1[:published_time])) || hd(list)
+  end
+
+  defp unescape_metadata_entities(metadata) do
+    metadata
+    |> Map.update(:title, nil, &unescape_html_entities/1)
+    |> Map.update(:excerpt, nil, &unescape_html_entities/1)
+    |> Map.update(:byline, nil, &unescape_html_entities/1)
+    |> Map.update(:site_name, nil, &unescape_html_entities/1)
+    |> Map.update(:published_time, nil, &unescape_html_entities/1)
+  end
+
+  defp unescape_html_entities(nil), do: nil
+  defp unescape_html_entities(""), do: ""
+
+  defp unescape_html_entities(text) when is_binary(text) do
+    text
+    |> String.replace(~r/&(?:quot|amp|apos|lt|gt);/, fn match ->
+      case match do
+        "&quot;" -> "\""
+        "&amp;" -> "&"
+        "&apos;" -> "'"
+        "&lt;" -> "<"
+        "&gt;" -> ">"
+      end
+    end)
+    |> then(fn updated ->
+      Regex.replace(~r/&#(?:x([0-9a-f]+)|([0-9]+));/i, updated, fn match, hex, num ->
+        decoded =
+          if is_nil(hex) do
+            decode_codepoint(num, 10)
+          else
+            decode_codepoint(hex, 16)
+          end
+
+        decoded || match
+      end)
+    end)
+  end
+
+  defp decode_codepoint(value, base) do
+    case Integer.parse(value, base) do
+      {num, _} ->
+        if num == 0 or num > 0x10FFFF or (num >= 0xD800 and num <= 0xDFFF) do
+          <<0xFFFD::utf8>>
+        else
+          <<num::utf8>>
+        end
+
+      :error ->
+        nil
+    end
   end
 
   defp blank_to_nil(nil), do: nil

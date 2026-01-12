@@ -165,8 +165,7 @@ areas, what is already aligned, and where gaps remain.
     for article:author is handled differently.
 
 - _unescapeHtmlEntities
-  - Status: Partial
-  - Notes: Elixir decodes numeric entities only, not named ones like &amp;.
+  - Status: Matched
 
 ## Title
 
@@ -181,5 +180,4 @@ areas, what is already aligned, and where gaps remain.
 ## High-impact Gaps (likely to affect fixtures)
 
 1. JSON-LD context/type validation and expanded types.
-2. Named HTML entity decoding.
-3. Paging / multi-page support.
+2. Paging / multi-page support.
