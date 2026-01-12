@@ -146,7 +146,9 @@ defmodule ReadabilityEx.Sieve do
   defp pick_top_candidate(state) do
     top =
       state
-      |> Enum.reject(fn {_id, n} -> n.tag in ["html", "body", "head"] end)
+      |> Enum.reject(fn {_id, n} ->
+        n.tag in ["html", "body", "head"] or unlikely_candidate?(n)
+      end)
       |> Enum.map(fn {id, n} ->
         final = n.score * (1.0 - (n.link_density || 0.0))
         {id, final}
@@ -248,13 +250,20 @@ defmodule ReadabilityEx.Sieve do
   defp news_article_container?(node) do
     itemtype = attr(node.attrs, "itemtype") |> String.downcase()
 
-    node.id_attr == "news-article" or
-      (itemtype != "" and String.contains?(itemtype, "newsarticle"))
+    node.tag not in ["html", "head", "body"] and
+      (node.id_attr in ["news-article", "story"] or
+         (itemtype != "" and String.contains?(itemtype, "newsarticle")))
+  end
+
+  defp unlikely_candidate?(node) do
+    s = (node.class || "") <> " " <> (node.id_attr || "")
+    String.match?(s, ~r/\bmodal\b/i) or
+      (Regex.match?(Constants.re_unlikely(), s) and not Regex.match?(Constants.re_ok_maybe(), s))
   end
 
   defp content_container?(node) do
     node.tag in ["div", "section", "article", "main"] and
-      (node.id_attr in ["content", "news-article"] or article_body_attr?(node) or
+      (node.id_attr in ["content", "news-article", "story"] or article_body_attr?(node) or
          content_class?(node) or article_header_container?(node))
   end
 

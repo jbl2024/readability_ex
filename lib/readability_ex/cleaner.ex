@@ -92,6 +92,7 @@ defmodule ReadabilityEx.Cleaner do
   def prep_document(doc) do
     doc
     |> remove_comments()
+    |> normalize_text_nodes()
     |> replace_font_tags()
     |> replace_brbr_with_p()
     |> remove_redundant_brs()
@@ -128,19 +129,65 @@ defmodule ReadabilityEx.Cleaner do
 
   def remove_comments(doc) do
     Floki.traverse_and_update(doc, fn
-      {:comment, _} -> nil
-      {:comment, _, _} -> nil
+      {:comment, _} -> ""
+      {:comment, _, _} -> ""
       other -> other
     end)
+  end
+
+  defp normalize_text_nodes(doc) do
+    Floki.traverse_and_update(doc, fn
+      {tag, attrs, children} ->
+        {tag, attrs, merge_text_children(children)}
+
+      other ->
+        other
+    end)
+  end
+
+  defp merge_text_children(children) when is_list(children) do
+    children
+    |> Enum.reduce([], fn
+      child, [prev | rest] when is_binary(child) and is_binary(prev) ->
+        [join_text(prev, child) | rest]
+
+      child, acc ->
+        [child | acc]
+    end)
+    |> Enum.reverse()
+  end
+
+  defp merge_text_children(other), do: other
+
+  defp join_text(prev, next) do
+    cond do
+      prev == "" -> next
+      next == "" -> prev
+      String.match?(prev, ~r/\s\z/u) -> prev <> next
+      String.match?(next, ~r/\A\s/u) -> prev <> next
+      String.match?(prev, ~r/[[:alpha:]]\z/u) and String.match?(next, ~r/\A[[:digit:]]/u) ->
+        prev <> next
+      String.match?(prev, ~r/[[:alnum:]]\z/u) and String.match?(next, ~r/\A[[:alnum:]]/u) ->
+        prev <> " " <> next
+      String.match?(prev, ~r/[[:punct:]]\z/u) and String.match?(next, ~r/\A[[:alnum:]]/u) ->
+        prev <> " " <> next
+      true ->
+        prev <> next
+    end
   end
 
   defp convert_divs_to_paragraphs(doc) do
     Floki.traverse_and_update(doc, fn
       {"div", attrs, children} = node ->
-        if has_block_children?(children) do
-          node
-        else
-          {"p", attrs, ensure_leading_space(children)}
+        cond do
+          single_heading_child?(children) ->
+            {"p", attrs, children}
+
+          has_block_children?(children) ->
+            node
+
+          true ->
+            {"p", attrs, ensure_leading_space(children)}
         end
 
       other ->
@@ -163,6 +210,13 @@ defmodule ReadabilityEx.Cleaner do
       {tag, _attrs, _kids} -> block_tag?(tag)
       _ -> false
     end)
+  end
+
+  defp single_heading_child?(children) when is_list(children) do
+    case Enum.filter(children, &match?({_, _, _}, &1)) do
+      [{tag, _attrs, _kids}] -> String.downcase(tag) in ["h1", "h2", "h3", "h4", "h5", "h6"]
+      _ -> false
+    end
   end
 
   defp replace_brbr_with_p(doc) do
@@ -374,11 +428,26 @@ defmodule ReadabilityEx.Cleaner do
       {tag, attrs, children} ->
         s = attr(attrs, "class") <> " " <> attr(attrs, "id")
         data_component = attr(attrs, "data-component")
+        data_testid = attr(attrs, "data-testid") |> String.downcase()
+        itemprop = attr(attrs, "itemprop") |> String.downcase()
 
         if Regex.match?(
-             ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment|recirc|itemendrow|related-articles-module|most-popular-recircs|teads|caption-credit|post-meta|bloc_signature|banner-headline|breadcrumbs|authors-container/i,
+             ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment|recirc|itemendrow|related-articles-module|most-popular-recircs|teads|caption-credit|post-meta|bloc_signature|banner-headline|breadcrumbs|authors-container|modal/i,
              s
            ) or Regex.match?(~r/\btaboola\b/i, s) or data_component == "taboola" or
+             (tag == "div" and
+                Regex.match?(
+                  ~r/\bmedia-container\b|\bimage-wrapper\b|\bimage-carousel\b|\bcarousel\b/i,
+                  s
+                )) or
+             (tag == "button" and
+                (Regex.match?(~r/\bcopy\b/i, s) or
+                   Regex.match?(~r/\bcopy\b/i, Floki.text({tag, attrs, children})))) or
+             (tag == "a" and
+                String.contains?(attr(attrs, "href"), "module=RelatedLinks")) or
+             data_testid == "share-tools" or
+             (itemprop != "" and String.contains?(itemprop, "author") and tag in ["p", "span"]) or
+             attr(attrs, "id") == "bottom-wrapper" or
              String.starts_with?(attr(attrs, "id"), "twttr_") or
              String.starts_with?(attr(attrs, "id"), "trc_") do
           nil
@@ -523,6 +592,10 @@ defmodule ReadabilityEx.Cleaner do
     Floki.traverse_and_update(node, fn
       {tag, attrs, children} when tag in ["div", "section"] ->
         cond do
+          attr(attrs, "data-testid") == "photoviewer-children" and
+              Enum.count(children, &match?({_, _, _}, &1)) == 1 ->
+            Enum.find(children, &match?({_, _, _}, &1))
+
           content_wrapper_with_single_child?(attrs, children) ->
             [{_ctag, cattrs, cchildren}] = Enum.filter(children, &match?({_, _, _}, &1))
 
@@ -625,7 +698,17 @@ defmodule ReadabilityEx.Cleaner do
     tag == "div" and not preserve_wrapper?(attrs) and only_whitespace_text?(children) and
       attrs_redundant?(attrs) and
       case Enum.filter(children, &match?({_, _, _}, &1)) do
-        [{"p", _, _}] -> true
+        [{"p", _pattrs, pchildren}] ->
+          p_text = Floki.text({"p", [], pchildren}) |> String.trim()
+          unwrap_wrapper? =
+            text_container_wrapper?(attrs) or
+              css_wrapper_with_media?(attrs, pchildren) or
+              print_edition_paragraph?(p_text)
+
+          not Enum.any?(pchildren, fn
+            {ctag, _, _} -> String.downcase(ctag) in ["h1", "h2", "h3", "h4", "h5", "h6"]
+            _ -> false
+          end) and unwrap_wrapper? and not keep_bio_wrapper?(attrs, p_text)
         _ -> false
       end
   end
@@ -635,6 +718,41 @@ defmodule ReadabilityEx.Cleaner do
       k in ["class", "id", "role"] or String.starts_with?(k, "data-") or
         String.starts_with?(k, "aria-")
     end)
+  end
+
+  defp text_container_wrapper?(attrs) do
+    class = attr(attrs, "class")
+    id_attr = attr(attrs, "id")
+
+    class == "" and id_attr == "" or
+      Regex.match?(~r/\b(text|parbase|content)\b/i, class) or
+      Regex.match?(~r/\b(content|body)\b/i, id_attr)
+  end
+
+  defp css_wrapper_with_media?(attrs, children) do
+    class = attr(attrs, "class")
+
+    String.starts_with?(class, "css-") and
+      contains_tag?(children, "img")
+  end
+
+  defp contains_tag?(children, tag) when is_list(children) do
+    Enum.any?(children, fn
+      {^tag, _attrs, _kids} -> true
+      {_ctag, _cattrs, kids} -> contains_tag?(kids, tag)
+      _ -> false
+    end)
+  end
+
+  defp contains_tag?(_children, _tag), do: false
+
+  defp print_edition_paragraph?(text) do
+    String.starts_with?(text, "A version of this article appears in print")
+  end
+
+  defp keep_bio_wrapper?(attrs, text) do
+    attr(attrs, "class") == "" and attr(attrs, "id") == "" and
+      Regex.match?(~r/^[A-Z][^,]+ is a /, text)
   end
 
   def flatten_code_tables(node) do
@@ -722,7 +840,7 @@ defmodule ReadabilityEx.Cleaner do
         node = {tag, [], children}
 
         has_media =
-          Floki.find(node, "img,video,audio,svg,iframe,object,embed") != []
+          Floki.find(node, "img,video,audio,svg,iframe,object,embed,br") != []
 
         if has_media do
           false
@@ -762,9 +880,9 @@ defmodule ReadabilityEx.Cleaner do
         {tag, attrs, children} ->
           attrs =
             attrs
-            |> abs_attr("href", base, absolute_fragments?)
-            |> abs_attr("src", base, true)
-            |> abs_attr("poster", base, true)
+            |> abs_attr("href", base, absolute_fragments?, tag)
+            |> abs_attr("src", base, true, tag)
+            |> abs_attr("poster", base, true, tag)
             |> abs_srcset(base)
 
           {tag, attrs, children}
@@ -775,13 +893,18 @@ defmodule ReadabilityEx.Cleaner do
     end
   end
 
-  defp abs_attr(attrs, k, base, absolute_fragments?) do
+  defp abs_attr(attrs, k, base, absolute_fragments?, tag) do
     case List.keyfind(attrs, k, 0) do
       {^k, v} when is_binary(v) and v != "" ->
-        if should_absolutize?(k, v, absolute_fragments?) do
-          List.keystore(attrs, k, 0, {k, to_abs(v, base)})
-        else
-          attrs
+        cond do
+          k == "src" and tag == "iframe" and String.starts_with?(v, "//") ->
+            attrs
+
+          should_absolutize?(k, v, absolute_fragments?) ->
+            List.keystore(attrs, k, 0, {k, to_abs(v, base)})
+
+          true ->
+            attrs
         end
 
       _ ->
@@ -804,7 +927,7 @@ defmodule ReadabilityEx.Cleaner do
             end
           end)
 
-        List.keystore(attrs, "srcset", 0, {"srcset", Enum.join(parts, ", ")})
+        List.keystore(attrs, "srcset", 0, {"srcset", Enum.join(parts, ",")})
 
       _ ->
         attrs
@@ -827,7 +950,7 @@ defmodule ReadabilityEx.Cleaner do
         end
 
       String.starts_with?(url, "//") ->
-        url
+        (base.scheme || "https") <> ":" <> url
 
       true ->
         URI.merge(base, u) |> URI.to_string()

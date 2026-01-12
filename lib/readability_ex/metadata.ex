@@ -16,7 +16,9 @@ defmodule ReadabilityEx.Metadata do
     %{
       title: jsonld[:title] || meta[:title],
       excerpt: jsonld[:excerpt] || meta[:description],
-      byline: normalize_author(meta[:author]) || normalize_author(jsonld[:author]),
+      byline:
+        normalize_byl(meta[:byl]) ||
+          normalize_author(meta[:author]) || normalize_author(jsonld[:author]),
       site_name: normalize_site_name(meta[:site_name]),
       lang: meta[:lang],
       published_time: jsonld[:published_time] || meta[:published_time],
@@ -46,6 +48,7 @@ defmodule ReadabilityEx.Metadata do
 
   defp get_meta(doc) do
     %{
+      byl: meta_content(doc, ["byl"]),
       title:
         meta_content(doc, [
           "dc:title",
@@ -214,6 +217,44 @@ defmodule ReadabilityEx.Metadata do
     end
   end
 
+  defp normalize_byl(nil), do: nil
+
+  defp normalize_byl(byl) when is_binary(byl) do
+    byl =
+      byl
+      |> String.trim()
+      |> then(&Regex.replace(~r/^by\s+/i, &1, ""))
+      |> String.trim()
+
+    byl =
+      if all_caps_name?(byl) do
+        titlecase(byl)
+      else
+        byl
+      end
+
+    blank_to_nil(byl)
+  end
+
+  defp all_caps_name?(text) do
+    letters = Regex.scan(~r/\p{L}+/u, text) |> List.flatten()
+    letters != [] and Enum.all?(letters, fn part -> part == String.upcase(part) end)
+  end
+
+  defp titlecase(text) do
+    text
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.map(&titlecase_word/1)
+    |> Enum.join(" ")
+  end
+
+  defp titlecase_word(word) do
+    word
+    |> String.split("-", trim: true)
+    |> Enum.map(fn part -> part |> String.downcase() |> String.capitalize() end)
+    |> Enum.join("-")
+  end
+
   defp normalize_site_name(nil), do: nil
 
   defp normalize_site_name(name) when is_binary(name) do
@@ -228,10 +269,19 @@ defmodule ReadabilityEx.Metadata do
           |> String.replace(~r/\s*[|\-»:–—]\s*.+$/, "")
           |> String.trim()
 
+        right =
+          name
+          |> String.replace(~r/^.+?\s*[|\-»:–—]\s*/, "")
+          |> String.trim()
+
+        if Regex.match?(~r/^by\b/i, right) do
+          name
+        else
         if String.contains?(left, ".") do
           left
         else
           name
+        end
         end
       else
         name
