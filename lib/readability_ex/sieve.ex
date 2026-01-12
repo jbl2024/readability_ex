@@ -445,7 +445,7 @@ defmodule ReadabilityEx.Sieve do
       negative_or_unlikely?(s) ->
         nil
 
-      rel_author?(attrs) or Regex.match?(Constants.re_byline(), s) ->
+      rel_author?(attrs) ->
         text =
           node
           |> Floki.text()
@@ -453,6 +453,21 @@ defmodule ReadabilityEx.Sieve do
           |> String.replace(~r/\s*[\-–—]+$/, "")
 
         if String.length(text) in 3..120, do: text, else: nil
+
+      Regex.match?(Constants.re_byline(), s) ->
+        child = find_byline_in(children)
+
+        if child do
+          child
+        else
+          text =
+            node
+            |> Floki.text()
+            |> String.trim()
+            |> String.replace(~r/\s*[\-–—]+$/, "")
+
+          if String.length(text) in 3..120, do: text, else: nil
+        end
 
       true ->
         find_byline_in(children)

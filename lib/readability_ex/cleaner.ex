@@ -373,11 +373,14 @@ defmodule ReadabilityEx.Cleaner do
 
       {tag, attrs, children} ->
         s = attr(attrs, "class") <> " " <> attr(attrs, "id")
+        data_component = attr(attrs, "data-component")
 
         if Regex.match?(
-             ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment|recirc|itemendrow|related-articles-module|most-popular-recircs/i,
+             ~r/\barticle__photo\b|photo--opener|article__photo__image|article__photo__desc|content-head|content-bar|author__|author--article|codefragment|recirc|itemendrow|related-articles-module|most-popular-recircs|teads/i,
              s
-           ) or String.starts_with?(attr(attrs, "id"), "twttr_") do
+           ) or Regex.match?(~r/\btaboola\b/i, s) or data_component == "taboola" or
+             String.starts_with?(attr(attrs, "id"), "twttr_") or
+             String.starts_with?(attr(attrs, "id"), "trc_") do
           nil
         else
           {tag, attrs, children}
@@ -419,6 +422,9 @@ defmodule ReadabilityEx.Cleaner do
 
     cond do
       weight + content_score < 0 -> true
+      text != "" and Regex.match?(~r/\badvertising\b/i, text) and String.length(text) < 200 and
+          ReadabilityEx.Metrics.link_density(node) > 0.2 ->
+        true
       text != "" and Regex.match?(Constants.re_ad_words(), text) -> true
       text != "" and Regex.match?(Constants.re_loading_words(), text) -> true
       true -> shady_metrics_drop?(node)
