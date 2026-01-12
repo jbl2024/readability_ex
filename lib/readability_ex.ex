@@ -33,7 +33,16 @@ defmodule ReadabilityEx do
     state = Index.build(doc)
 
     attempts = [
-      run_attempt(state, doc, meta, title, base_uri, absolute_fragments?, Constants.flag_all(), opts),
+      run_attempt(
+        state,
+        doc,
+        meta,
+        title,
+        base_uri,
+        absolute_fragments?,
+        Constants.flag_all(),
+        opts
+      ),
       run_attempt(
         state,
         doc,

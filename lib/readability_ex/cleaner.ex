@@ -198,8 +198,23 @@ defmodule ReadabilityEx.Cleaner do
         has_block_children =
           Enum.any?(children, fn
             {ctag, _, _} ->
-              String.downcase(ctag) in ["p", "div", "section", "article", "pre", "blockquote",
-                "ul", "ol", "table", "h1", "h2", "h3", "h4", "h5", "h6"]
+              String.downcase(ctag) in [
+                "p",
+                "div",
+                "section",
+                "article",
+                "pre",
+                "blockquote",
+                "ul",
+                "ol",
+                "table",
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "h5",
+                "h6"
+              ]
 
             _ ->
               false
@@ -372,7 +387,8 @@ defmodule ReadabilityEx.Cleaner do
 
   def remove_semantic_junk(node) do
     Floki.traverse_and_update(node, fn
-      {tag, _attrs, _children} when tag in ["nav", "footer", "aside", "form", "iframe", "object", "embed"] ->
+      {tag, _attrs, _children}
+      when tag in ["nav", "footer", "aside", "form", "iframe", "object", "embed"] ->
         nil
 
       other ->
@@ -472,7 +488,7 @@ defmodule ReadabilityEx.Cleaner do
         link_density > 0.5 -> true
         p_count == 0 and media_count > 1 -> true
         p_count > 0 and media_count / p_count > 2.0 -> true
-        (li_count > p_count and tag_name(node) not in ["ul", "ol"]) -> true
+        li_count > p_count and tag_name(node) not in ["ul", "ol"] -> true
         input_count > p_count / 3 -> true
         true -> false
       end
@@ -683,13 +699,17 @@ defmodule ReadabilityEx.Cleaner do
         url
 
       u.scheme in ["http", "https"] ->
-        if (u.path in [nil, ""]) and is_nil(u.query) and is_nil(u.fragment) do
+        if u.path in [nil, ""] and is_nil(u.query) and is_nil(u.fragment) do
           url <> "/"
         else
           url
         end
-      String.starts_with?(url, "//") -> (base.scheme || "https") <> ":" <> url
-      true -> URI.merge(base, u) |> URI.to_string()
+
+      String.starts_with?(url, "//") ->
+        (base.scheme || "https") <> ":" <> url
+
+      true ->
+        URI.merge(base, u) |> URI.to_string()
     end
   end
 

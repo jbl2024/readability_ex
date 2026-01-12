@@ -71,6 +71,7 @@ defmodule ReadabilityEx.Title do
     |> String.split(~r/\s+/, trim: true)
     |> length()
   end
+
   defp blank(nil), do: ""
   defp blank(s), do: String.trim(s || "")
 end

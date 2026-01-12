@@ -124,12 +124,14 @@ defmodule ReadabilityEx.Sieve do
           end
 
         add = score / divider
+
         updated = %{
           parent
           | score: parent.score + add,
             content_score: parent.content_score + add,
             is_candidate: true
         }
+
         state = Map.put(state, pid, updated)
         propagate_up(parent.parent_id, score, level + 1, state)
     end
@@ -144,6 +146,7 @@ defmodule ReadabilityEx.Sieve do
         {id, final}
       end)
       |> Enum.max_by(fn {_id, s} -> s end, fn -> {nil, 0.0} end)
+
     {top_id, top_score} = top
 
     if top_score > 0.0 do
@@ -252,7 +255,7 @@ defmodule ReadabilityEx.Sieve do
     parent = state[top.parent_id]
 
     if not is_nil(parent) and top.tag == "article" and
-         ((parent.tag == "main") or
+         (parent.tag == "main" or
             (container_candidate?(parent) and parent.tag in ["div", "section", "main"])) do
       container = to_container_node(%{parent | raw: {parent.tag, parent.attrs, kept}})
       {"div", [{"id", "readability-page-1"}, {"class", "page"}], [container]}
