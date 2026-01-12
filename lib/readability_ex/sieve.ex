@@ -119,7 +119,12 @@ defmodule ReadabilityEx.Sieve do
           end
 
         add = score / divider
-        updated = %{parent | score: parent.score + add, content_score: parent.content_score + add}
+        updated = %{
+          parent
+          | score: parent.score + add,
+            content_score: parent.content_score + add,
+            is_candidate: true
+        }
         state = Map.put(state, pid, updated)
         propagate_up(parent.parent_id, score, level + 1, state)
     end
@@ -128,6 +133,7 @@ defmodule ReadabilityEx.Sieve do
   defp pick_top_candidate(state) do
     top =
       state
+      |> Enum.reject(fn {_id, n} -> n.tag in ["html", "body"] end)
       |> Enum.map(fn {id, n} ->
         final = n.score * (1.0 - (n.link_density || 0.0))
         {id, final}
@@ -224,7 +230,13 @@ defmodule ReadabilityEx.Sieve do
       end)
       |> Enum.map(& &1.raw)
 
-    {"div", [{"id", "readability-content"}], kept}
+    section =
+      case kept do
+        [{"section", _attrs, children}] -> {"section", [], children}
+        _ -> {"section", [], kept}
+      end
+
+    {"div", [{"id", "readability-page-1"}, {"class", "page"}], [section]}
   end
 
   defp same_class?(sib, top) do
@@ -248,7 +260,7 @@ defmodule ReadabilityEx.Sieve do
   end
 
   defp find_byline_near(top_id, state) do
-    # Simple heuristic: search ancestors for byline-like nodes
+    # Simple heuristic: search ancestors for byline-like descendants
     chain =
       Stream.iterate(top_id, fn x -> state[x] && state[x].parent_id end)
       |> Enum.take_while(&(!is_nil(&1)))
@@ -256,13 +268,25 @@ defmodule ReadabilityEx.Sieve do
     chain
     |> Enum.map(&state[&1])
     |> Enum.find_value(fn n ->
-      s = (n.class || "") <> " " <> (n.id_attr || "")
+      n.raw
+      |> Floki.find("*")
+      |> Enum.find_value(fn {_, attrs, _} = node ->
+        s = attr(attrs, "class") <> " " <> attr(attrs, "id")
 
-      if Regex.match?(Constants.re_byline(), s) and String.length(n.text || "") in 3..120 do
-        String.trim(n.text)
-      else
-        nil
-      end
+        if Regex.match?(Constants.re_byline(), s) do
+          text =
+            node
+            |> Floki.text()
+            |> String.trim()
+            |> String.replace(~r/\s*[\-–—]+$/, "")
+
+          if String.length(text) in 3..120, do: text, else: nil
+        else
+          nil
+        end
+      end)
     end)
   end
+
+  defp attr(attrs, k), do: (List.keyfind(attrs, k, 0) || {k, ""}) |> elem(1)
 end

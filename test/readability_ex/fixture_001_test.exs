@@ -11,7 +11,7 @@ defmodule ReadabilityEx.Fixture001Test do
     {:ok, result} =
       ReadabilityEx.parse(
         fix.source,
-        base_uri: "https://example.com"
+        base_uri: "http://fakehost"
       )
 
     # ---- DEBUG OUTPUT (optionnel, mais très utile au début)

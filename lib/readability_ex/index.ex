@@ -43,10 +43,10 @@ defmodule ReadabilityEx.Index do
   end
 
   # Ignore comments
-  defp walk({:comment, _}, _parent_id, state, acc), do: {state, acc}
+  defp walk({:comment, _}, _parent_id, state, _acc), do: {nil, state}
 
   # Ignore doctype
-  defp walk({:doctype, _}, _parent_id, state, acc), do: {state, acc}
+  defp walk({:doctype, _}, _parent_id, state, _acc), do: {nil, state}
 
   defp walk(text, _parent_id, state, _acc) when is_binary(text), do: {nil, state}
 

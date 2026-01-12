@@ -14,7 +14,7 @@ defmodule ReadabilityEx.ReadabilityFixtureTest do
         {:ok, result} =
           ReadabilityEx.parse(
             fix.source,
-            base_uri: "https://example.com"
+            base_uri: "http://fakehost"
           )
 
         # 2. HTML comparison

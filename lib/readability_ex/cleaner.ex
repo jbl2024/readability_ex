@@ -100,12 +100,26 @@ defmodule ReadabilityEx.Cleaner do
     # This is a simplified but deterministic transform: split text runs around double BR.
     Floki.traverse_and_update(doc, fn
       {tag, attrs, children} when tag in ["div", "section", "article"] ->
-        new_children =
-          children
-          |> normalize_br(children_to_tokens())
-          |> tokens_to_paragraph_nodes()
+        has_block_children =
+          Enum.any?(children, fn
+            {ctag, _, _} ->
+              String.downcase(ctag) in ["p", "div", "section", "article", "pre", "blockquote",
+                "ul", "ol", "table", "h1", "h2", "h3", "h4", "h5", "h6"]
 
-        {tag, attrs, new_children}
+            _ ->
+              false
+          end)
+
+        if has_block_children do
+          {tag, attrs, children}
+        else
+          new_children =
+            children
+            |> normalize_br(children_to_tokens())
+            |> tokens_to_paragraph_nodes()
+
+          {tag, attrs, new_children}
+        end
 
       other ->
         other

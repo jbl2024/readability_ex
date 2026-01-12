@@ -42,7 +42,7 @@ defmodule ReadabilityEx.Metadata do
 
   defp get_meta(doc) do
     %{
-      title: doc |> Floki.find("title") |> Floki.text() |> blank_to_nil(),
+      title: meta_content(doc, ["og:title", "twitter:title", "parsely-title"]),
       description: meta_content(doc, ["og:description", "twitter:description", "description"]),
       author: meta_content(doc, ["author", "parsely-author", "article:author"]),
       site_name: meta_content(doc, ["og:site_name"]),

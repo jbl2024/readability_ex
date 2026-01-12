@@ -18,32 +18,33 @@ defmodule ReadabilityEx.Title do
   defp refine_title("", _doc), do: "Untitled"
 
   defp refine_title(raw, doc) do
-    parts =
-      raw
-      |> String.split(@seps, trim: true)
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
-
     best =
-      case parts do
-        [] -> raw
-        [one] -> one
-        many -> choose_side(many)
+      if Regex.match?(@seps, raw) do
+        choose_side(raw)
+      else
+        raw
       end
 
     best = verify_with_h1(best, doc) || best
     best
   end
 
-  defp choose_side(parts) do
+  defp choose_side(raw) do
     # Prefer stripping site name at end; if too short, try other side.
-    cand1 = parts |> Enum.drop(-1) |> Enum.join(" ") |> String.trim()
-    cand2 = parts |> tl() |> Enum.join(" ") |> String.trim()
+    cand1 =
+      raw
+      |> String.replace(~r/\s*[|\-»:–—]\s*[^|\-»:–—]+$/, "")
+      |> String.trim()
+
+    cand2 =
+      raw
+      |> String.replace(~r/^[^|\-»:–—]+\s*[|\-»:–—]\s*/, "")
+      |> String.trim()
 
     cond do
       word_count(cand1) >= 3 -> cand1
       word_count(cand2) >= 3 -> cand2
-      true -> Enum.at(parts, 0)
+      true -> raw
     end
   end
 
@@ -64,7 +65,12 @@ defmodule ReadabilityEx.Title do
     |> String.trim()
   end
 
-  defp word_count(s), do: s |> String.split(~r/\s+/, trim: true) |> length()
+  defp word_count(s) do
+    s
+    |> String.replace(@seps, " ")
+    |> String.split(~r/\s+/, trim: true)
+    |> length()
+  end
   defp blank(nil), do: ""
   defp blank(s), do: String.trim(s || "")
 end
