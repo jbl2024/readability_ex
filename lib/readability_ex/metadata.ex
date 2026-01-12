@@ -1,6 +1,8 @@
 defmodule ReadabilityEx.Metadata do
   @moduledoc false
 
+  alias ReadabilityEx.Title
+
   @jsonld_types MapSet.new([
                   "Article",
                   "AdvertiserContentArticle",
@@ -24,7 +26,8 @@ defmodule ReadabilityEx.Metadata do
                 ])
 
   def extract(doc, raw_html) do
-    jsonld = get_jsonld(raw_html)
+    article_title = Title.get_article_title(doc, %{title: ""}, [])
+    jsonld = get_jsonld(raw_html, article_title)
     meta = get_meta(doc)
 
     %{
@@ -136,7 +139,7 @@ defmodule ReadabilityEx.Metadata do
     |> Enum.any?(&(&1 == key))
   end
 
-  defp get_jsonld(raw_html) do
+  defp get_jsonld(raw_html, article_title) do
     # Parse <script type="application/ld+json"> blocks from raw HTML (safer than after removal).
     blocks =
       Regex.scan(
@@ -146,12 +149,12 @@ defmodule ReadabilityEx.Metadata do
       |> Enum.map(fn [_, body] -> body end)
 
     blocks
-    |> Enum.map(&decode_jsonld/1)
+    |> Enum.map(&decode_jsonld(&1, article_title))
     |> Enum.reject(&is_nil/1)
     |> pick_best_jsonld()
   end
 
-  defp decode_jsonld(body) do
+  defp decode_jsonld(body, article_title) do
     body =
       body
       |> String.trim()
@@ -160,25 +163,25 @@ defmodule ReadabilityEx.Metadata do
       |> String.trim()
 
     with {:ok, json} <- Jason.decode(body) do
-      normalize_jsonld(json)
+      normalize_jsonld(json, article_title)
     else
       _ -> nil
     end
   end
 
-  defp normalize_jsonld(list) when is_list(list) do
+  defp normalize_jsonld(list, article_title) when is_list(list) do
     list
     |> Enum.find(&jsonld_article_type?/1)
-    |> normalize_jsonld()
+    |> normalize_jsonld(article_title)
   end
 
-  defp normalize_jsonld(nil), do: nil
+  defp normalize_jsonld(nil, _article_title), do: nil
 
-  defp normalize_jsonld(%{"@graph" => graph}) when is_list(graph) do
-    normalize_jsonld(graph)
+  defp normalize_jsonld(%{"@graph" => graph}, article_title) when is_list(graph) do
+    normalize_jsonld(graph, article_title)
   end
 
-  defp normalize_jsonld(map) when is_map(map) do
+  defp normalize_jsonld(map, article_title) when is_map(map) do
     if schema_org_context?(map) do
       map =
         if map["@type"] do
@@ -191,7 +194,7 @@ defmodule ReadabilityEx.Metadata do
 
       if map && jsonld_article_type?(map) do
         %{
-          title: (map["headline"] || map["name"]) |> blank_to_nil(),
+          title: jsonld_title(map["name"], map["headline"], article_title),
           author: extract_author(map["author"]),
           published_time: (map["datePublished"] || map["dateCreated"]) |> blank_to_nil(),
           excerpt: map["description"] |> blank_to_nil(),
@@ -255,6 +258,55 @@ defmodule ReadabilityEx.Metadata do
 
   defp publisher_name(%{"name" => name}), do: blank_to_nil(name)
   defp publisher_name(_), do: nil
+
+  defp jsonld_title(name, headline, article_title) do
+    name = blank_to_nil(name)
+    headline = blank_to_nil(headline)
+
+    cond do
+      is_binary(name) and is_binary(headline) and name != headline ->
+        name_matches = text_similarity(name, article_title) > 0.75
+        headline_matches = text_similarity(headline, article_title) > 0.75
+
+        if headline_matches and not name_matches do
+          headline
+        else
+          name
+        end
+
+      is_binary(name) ->
+        name
+
+      is_binary(headline) ->
+        headline
+
+      true ->
+        nil
+    end
+  end
+
+  defp text_similarity(text_a, text_b) do
+    tokens_a = tokenize(text_a)
+    tokens_b = tokenize(text_b)
+
+    if tokens_a == [] or tokens_b == [] do
+      0.0
+    else
+      token_set_a = MapSet.new(tokens_a)
+      uniq_b = Enum.reject(tokens_b, &MapSet.member?(token_set_a, &1))
+      distance_b =
+        String.length(Enum.join(uniq_b, " ")) / max(1, String.length(Enum.join(tokens_b, " ")))
+
+      1.0 - distance_b
+    end
+  end
+
+  defp tokenize(text) do
+    text
+    |> to_string()
+    |> String.downcase()
+    |> String.split(~r/\W+/u, trim: true)
+  end
 
   defp unescape_metadata_entities(metadata) do
     metadata
