@@ -622,6 +622,8 @@ defmodule ReadabilityEx.Cleaner do
     end)
   end
 
+  def strip_attributes_and_classes(nil, _preserve_classes), do: nil
+
   def strip_attributes_and_classes(node, preserve_classes) do
     Floki.traverse_and_update(node, fn
       {tag, attrs, children} ->
@@ -656,7 +658,7 @@ defmodule ReadabilityEx.Cleaner do
   def remove_empty_nodes(node) do
     Floki.traverse_and_update(node, fn
       {tag, attrs, children} ->
-        if empty_node?(tag, children) do
+        if empty_node?(tag, attrs, children) do
           nil
         else
           {tag, attrs, children}
@@ -667,7 +669,10 @@ defmodule ReadabilityEx.Cleaner do
     end)
   end
 
-  defp empty_node?(tag, children) do
+  defp empty_node?(tag, attrs, children) do
+    if preserve_wrapper?(attrs) do
+      false
+    else
     tag = String.downcase(tag)
     text = children |> Floki.text() |> String.trim()
 
@@ -684,6 +689,7 @@ defmodule ReadabilityEx.Cleaner do
       else
         tag in ["p", "div", "section", "span"]
       end
+    end
     end
   end
 

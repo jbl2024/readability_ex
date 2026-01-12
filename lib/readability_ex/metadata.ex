@@ -15,7 +15,7 @@ defmodule ReadabilityEx.Metadata do
 
     %{
       title: meta[:title] || jsonld[:title],
-      excerpt: meta[:description],
+      excerpt: jsonld[:excerpt] || meta[:description],
       byline: meta[:author] || jsonld[:author],
       site_name: meta[:site_name],
       lang: meta[:lang],
@@ -134,7 +134,12 @@ defmodule ReadabilityEx.Metadata do
   end
 
   defp decode_jsonld(body) do
-    body = body |> String.trim()
+    body =
+      body
+      |> String.trim()
+      |> String.replace(~r/<!\[CDATA\[/, "")
+      |> String.replace(~r/\]\]>/, "")
+      |> String.trim()
 
     with {:ok, json} <- Jason.decode(body) do
       normalize_jsonld(json)
@@ -166,7 +171,8 @@ defmodule ReadabilityEx.Metadata do
       %{
         title: (map["headline"] || map["name"]) |> blank_to_nil(),
         author: extract_author(map["author"]),
-        published_time: (map["datePublished"] || map["dateCreated"]) |> blank_to_nil()
+        published_time: (map["datePublished"] || map["dateCreated"]) |> blank_to_nil(),
+        excerpt: map["description"] |> blank_to_nil()
       }
     else
       nil
