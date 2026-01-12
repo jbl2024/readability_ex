@@ -132,7 +132,8 @@ areas, what is already aligned, and where gaps remain.
   - Notes: Elixir includes extra site-specific removal rules.
 
 - _cleanMatchedNodes (share elements)
-  - Status: Matched
+  - Status: Partial
+  - Notes: Medium toolbar/share wrappers still leak through in `lazy-image-1` fixture; JS removes them earlier.
 
 - _cleanHeaders
   - Status: Matched
