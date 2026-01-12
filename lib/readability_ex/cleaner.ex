@@ -1663,7 +1663,7 @@ defmodule ReadabilityEx.Cleaner do
         if has_media do
           false
         else
-          tag in ["p", "div", "section", "span"]
+          tag == "p"
         end
       end
     end
@@ -1733,19 +1733,12 @@ defmodule ReadabilityEx.Cleaner do
   defp abs_srcset(attrs, base) do
     case List.keyfind(attrs, "srcset", 0) do
       {"srcset", v} when is_binary(v) and v != "" ->
-        parts =
-          v
-          |> String.split(",", trim: true)
-          |> Enum.map(fn part ->
-            part = String.trim(part)
-
-            case String.split(part, ~r/\s+/, parts: 2, trim: true) do
-              [url] -> to_abs(url, base)
-              [url, desc] -> to_abs(url, base) <> " " <> desc
-            end
+        updated =
+          Regex.replace(~r/(\S+)(\s+[\d.]+[xw])?(\s*(?:,|$))/, v, fn _m, url, desc, trail ->
+            to_abs(url, base) <> (desc || "") <> trail
           end)
 
-        List.keystore(attrs, "srcset", 0, {"srcset", Enum.join(parts, ",")})
+        List.keystore(attrs, "srcset", 0, {"srcset", updated})
 
       _ ->
         attrs

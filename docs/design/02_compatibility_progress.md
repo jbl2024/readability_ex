@@ -157,7 +157,7 @@ areas, what is already aligned, and where gaps remain.
 
 - _getJSONLD (context/type validation, name/headline similarity)
   - Status: Partial
-  - Notes: Elixir supports fewer types and does not validate schema.org context.
+  - Notes: Context/type validation and expanded types are aligned; name/headline similarity remains.
 
 - _getArticleMetadata (meta tag rules)
   - Status: Partial
@@ -179,5 +179,5 @@ areas, what is already aligned, and where gaps remain.
 
 ## High-impact Gaps (likely to affect fixtures)
 
-1. JSON-LD context/type validation and expanded types.
+1. JSON-LD name/headline similarity with HTML title.
 2. Paging / multi-page support.

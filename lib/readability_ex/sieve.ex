@@ -36,12 +36,12 @@ defmodule ReadabilityEx.Sieve do
         {top_id, state} = promote_common_ancestor(top_id, top_candidates, state, flags)
         {top_id, state} = promote_content_ancestor(top_id, state)
         top_id = promote_article_container(top_id, state)
+        top_id = promote_byline_container(top_id, state)
 
         article_node = build_article_node(top_id, state, flags)
 
         cleaned =
           article_node
-          |> Cleaner.remove_byline_nodes()
           |> Cleaner.mark_data_tables()
           |> Cleaner.fix_lazy_images()
           |> Cleaner.remove_semantic_junk()
@@ -341,6 +341,35 @@ defmodule ReadabilityEx.Sieve do
     end
   end
 
+  defp promote_byline_container(top_id, state) do
+    case state[top_id] do
+      nil ->
+        top_id
+
+      node ->
+        parent = node.parent_id && state[node.parent_id]
+
+        if parent && parent.tag != "body" and parent_has_byline_child?(parent, state) do
+          parent.id
+        else
+          top_id
+        end
+    end
+  end
+
+  defp parent_has_byline_child?(parent, state) do
+    Enum.any?(parent.child_ids, fn id ->
+      case state[id] do
+        nil ->
+          false
+
+        child ->
+          match_string = (child.class || "") <> " " <> (child.id_attr || "")
+          Regex.match?(Constants.re_byline(), match_string) and String.length(child.text || "") > 0
+      end
+    end)
+  end
+
   defp article_container?(node) do
     tag = node.tag
     id_attr = node.id_attr || ""
@@ -429,6 +458,14 @@ defmodule ReadabilityEx.Sieve do
         true
 
       sib.is_candidate and sib.score + content_bonus >= threshold ->
+        true
+
+      Regex.match?(Constants.re_byline(), (sib.class || "") <> " " <> (sib.id_attr || "")) and
+          String.length(sib.text || "") > 0 ->
+        true
+
+      same_class?(sib, top) and String.length(sib.text || "") > 0 and
+          (sib.link_density || 0.0) < 0.3 ->
         true
 
       sib.tag in ["p", "ul", "ol"] and String.length(sib.text || "") > 80 and

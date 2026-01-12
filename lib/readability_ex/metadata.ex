@@ -3,10 +3,24 @@ defmodule ReadabilityEx.Metadata do
 
   @jsonld_types MapSet.new([
                   "Article",
+                  "AdvertiserContentArticle",
                   "NewsArticle",
-                  "BlogPosting",
+                  "AnalysisNewsArticle",
+                  "AskPublicNewsArticle",
+                  "BackgroundNewsArticle",
+                  "OpinionNewsArticle",
+                  "ReportageNewsArticle",
+                  "ReviewNewsArticle",
                   "Report",
-                  "ScholarlyArticle"
+                  "SatiricalArticle",
+                  "ScholarlyArticle",
+                  "MedicalScholarlyArticle",
+                  "SocialMediaPosting",
+                  "BlogPosting",
+                  "LiveBlogPosting",
+                  "DiscussionForumPosting",
+                  "TechArticle",
+                  "APIReference"
                 ])
 
   def extract(doc, raw_html) do
@@ -19,7 +33,7 @@ defmodule ReadabilityEx.Metadata do
       byline:
         normalize_byl(meta[:byl]) ||
           normalize_author(meta[:author]) || normalize_author(jsonld[:author]),
-      site_name: normalize_site_name(meta[:site_name]),
+      site_name: normalize_site_name(jsonld[:site_name] || meta[:site_name]),
       lang: meta[:lang],
       published_time: jsonld[:published_time] || meta[:published_time],
       dir: meta[:dir]
@@ -154,30 +168,38 @@ defmodule ReadabilityEx.Metadata do
 
   defp normalize_jsonld(list) when is_list(list) do
     list
-    |> Enum.map(&normalize_jsonld/1)
-    |> Enum.reject(&is_nil/1)
-    |> List.first()
+    |> Enum.find(&jsonld_article_type?/1)
+    |> normalize_jsonld()
   end
+
+  defp normalize_jsonld(nil), do: nil
 
   defp normalize_jsonld(%{"@graph" => graph}) when is_list(graph) do
     normalize_jsonld(graph)
   end
 
   defp normalize_jsonld(map) when is_map(map) do
-    type =
-      case map["@type"] do
-        t when is_binary(t) -> t
-        [t | _] when is_binary(t) -> t
-        _ -> nil
-      end
+    if schema_org_context?(map) do
+      map =
+        if map["@type"] do
+          map
+        else
+          map
+          |> Map.get("@graph", [])
+          |> Enum.find(&jsonld_article_type?/1)
+        end
 
-    if type && MapSet.member?(@jsonld_types, type) do
-      %{
-        title: (map["headline"] || map["name"]) |> blank_to_nil(),
-        author: extract_author(map["author"]),
-        published_time: (map["datePublished"] || map["dateCreated"]) |> blank_to_nil(),
-        excerpt: map["description"] |> blank_to_nil()
-      }
+      if map && jsonld_article_type?(map) do
+        %{
+          title: (map["headline"] || map["name"]) |> blank_to_nil(),
+          author: extract_author(map["author"]),
+          published_time: (map["datePublished"] || map["dateCreated"]) |> blank_to_nil(),
+          excerpt: map["description"] |> blank_to_nil(),
+          site_name: publisher_name(map["publisher"])
+        }
+      else
+        nil
+      end
     else
       nil
     end
@@ -186,8 +208,13 @@ defmodule ReadabilityEx.Metadata do
   defp extract_author(nil), do: nil
   defp extract_author(%{"name" => n}), do: blank_to_nil(n)
 
-  defp extract_author(list) when is_list(list),
-    do: list |> Enum.map(&extract_author/1) |> Enum.find(& &1)
+  defp extract_author(list) when is_list(list) do
+    list
+    |> Enum.map(&extract_author/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(", ")
+    |> blank_to_nil()
+  end
 
   defp extract_author(n) when is_binary(n), do: blank_to_nil(n)
   defp extract_author(_), do: nil
@@ -198,6 +225,36 @@ defmodule ReadabilityEx.Metadata do
   defp pick_best_jsonld(list) do
     Enum.find(list, &(&1[:title] && &1[:published_time])) || hd(list)
   end
+
+  defp jsonld_article_type?(%{"@type" => type}), do: jsonld_article_type?(type)
+
+  defp jsonld_article_type?(type) when is_binary(type) do
+    MapSet.member?(@jsonld_types, type)
+  end
+
+  defp jsonld_article_type?(types) when is_list(types) do
+    Enum.any?(types, &jsonld_article_type?/1)
+  end
+
+  defp jsonld_article_type?(_), do: false
+
+  defp schema_org_context?(%{"@context" => context}), do: schema_org_context?(context)
+
+  defp schema_org_context?(context) when is_binary(context) do
+    Regex.match?(~r/^https?:\/\/schema\.org\/?$/i, context)
+  end
+
+  defp schema_org_context?(context) when is_map(context) do
+    case Map.get(context, "@vocab") do
+      nil -> false
+      vocab -> schema_org_context?(vocab)
+    end
+  end
+
+  defp schema_org_context?(_), do: false
+
+  defp publisher_name(%{"name" => name}), do: blank_to_nil(name)
+  defp publisher_name(_), do: nil
 
   defp unescape_metadata_entities(metadata) do
     metadata
