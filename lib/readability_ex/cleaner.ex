@@ -521,22 +521,22 @@ defmodule ReadabilityEx.Cleaner do
         if redundant_div_with_p?(tag, attrs, children) do
           List.first(children)
         else
-        meaningful_text? = direct_text?(children)
-        preserve_wrapper? = preserve_wrapper?(attrs)
+          meaningful_text? = direct_text?(children)
+          preserve_wrapper? = preserve_wrapper?(attrs)
 
-        child_structural =
-          children
-          |> Enum.filter(&match?({_, _, _}, &1))
-          |> Enum.filter(fn {ctag, _, _} -> String.downcase(ctag) in ["div", "section"] end)
+          child_structural =
+            children
+            |> Enum.filter(&match?({_, _, _}, &1))
+            |> Enum.filter(fn {ctag, _, _} -> String.downcase(ctag) in ["div", "section"] end)
 
-        if not preserve_wrapper? and not meaningful_text? and length(child_structural) == 1 and
-             only_whitespace_text?(children) do
-          {ctag, cattrs, cchildren} = hd(child_structural)
-          merged_attrs = merge_attrs(cattrs, attrs)
-          {ctag, merged_attrs, cchildren}
-        else
-          {tag, attrs, children}
-        end
+          if not preserve_wrapper? and not meaningful_text? and length(child_structural) == 1 and
+               only_whitespace_text?(children) do
+            {ctag, cattrs, cchildren} = hd(child_structural)
+            merged_attrs = merge_attrs(cattrs, attrs)
+            {ctag, merged_attrs, cchildren}
+          else
+            {tag, attrs, children}
+          end
         end
 
       other ->

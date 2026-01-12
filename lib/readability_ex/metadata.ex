@@ -94,7 +94,10 @@ defmodule ReadabilityEx.Metadata do
 
     Enum.find_value(keys, fn key ->
       Enum.find_value(metas, fn meta ->
-        attrs = Floki.attribute(meta, "property") ++ Floki.attribute(meta, "name") ++ Floki.attribute(meta, "itemprop")
+        attrs =
+          Floki.attribute(meta, "property") ++
+            Floki.attribute(meta, "name") ++ Floki.attribute(meta, "itemprop")
+
         content = meta |> Floki.attribute("content") |> List.first() |> blank_to_nil()
 
         if content && Enum.any?(attrs, &meta_key_match?(&1, key)) do

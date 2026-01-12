@@ -242,20 +242,20 @@ defmodule ReadabilityEx.Sieve do
             same_class?(sib, top) ->
               true
 
-          sib.tag == "p" and String.length(sib.text || "") > 80 and
-              (sib.link_density || 0.0) < 0.25 ->
-            true
+            sib.tag == "p" and String.length(sib.text || "") > 80 and
+                (sib.link_density || 0.0) < 0.25 ->
+              true
 
-          has_good_paragraph?(sib.raw) ->
-            true
+            has_good_paragraph?(sib.raw) ->
+              true
 
-          has_single_image?(sib.raw) and (sib.link_density || 0.0) < 0.5 ->
-            true
+            has_single_image?(sib.raw) and (sib.link_density || 0.0) < 0.5 ->
+              true
 
-          true ->
-            false
-        end
-      end)
+            true ->
+              false
+          end
+        end)
         |> Enum.map(& &1.raw)
       end
 

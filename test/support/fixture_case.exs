@@ -1,12 +1,12 @@
-defmodule ReadabilityEx.Fixture002Test do
-  use ExUnit.Case
+defmodule ReadabilityEx.FixtureCase do
+  @moduledoc false
+
+  import ExUnit.Assertions
 
   alias ReadabilityEx.TestHelpers
 
-  @fixture_id "003-metadata-preferred"
-
-  test "Readability fixture 003-metadata-preferred" do
-    fix = TestHelpers.read_fixture(@fixture_id)
+  def run_fixture(id) do
+    fix = TestHelpers.read_fixture(id)
 
     {:ok, result} =
       ReadabilityEx.parse(
@@ -14,7 +14,6 @@ defmodule ReadabilityEx.Fixture002Test do
         base_uri: "http://fakehost"
       )
 
-    # ---- HTML comparison (normalized)
     expected_html =
       fix.expected_html
       |> TestHelpers.normalize_html()
@@ -25,7 +24,6 @@ defmodule ReadabilityEx.Fixture002Test do
 
     assert actual_html == expected_html
 
-    # ---- Metadata checks
     meta = fix.expected_meta
 
     assert result.title == meta["title"]
@@ -43,7 +41,6 @@ defmodule ReadabilityEx.Fixture002Test do
                TestHelpers.normalize_text(meta["excerpt"])
     end
 
-    # ---- Readerable flag
     if meta["readerable"] do
       assert result.length > 0
     end

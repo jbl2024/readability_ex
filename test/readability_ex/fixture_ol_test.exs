@@ -1,11 +1,11 @@
-defmodule ReadabilityEx.Fixture_001Test do
+defmodule ReadabilityEx.Fixture_olTest do
   use ExUnit.Case
 
   alias ReadabilityEx.FixtureCase
 
-  @fixture_id "001"
+  @fixture_id "ol"
 
-  test "Readability fixture 001" do
+  test "Readability fixture ol" do
     FixtureCase.run_fixture(@fixture_id)
   end
 end
