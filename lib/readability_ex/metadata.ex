@@ -14,7 +14,7 @@ defmodule ReadabilityEx.Metadata do
     meta = get_meta(doc)
 
     %{
-      title: meta[:title] || jsonld[:title],
+      title: jsonld[:title] || meta[:title],
       excerpt: jsonld[:excerpt] || meta[:description],
       byline: meta[:author] || jsonld[:author],
       site_name: normalize_site_name(meta[:site_name]),
