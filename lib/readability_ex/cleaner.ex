@@ -1044,7 +1044,7 @@ defmodule ReadabilityEx.Cleaner do
           children
           |> Enum.map(fn
             {ctag, cattrs, cchildren} ->
-              clean_share_node({ctag, cattrs, cchildren}, threshold)
+              clean_share_descendants({ctag, cattrs, cchildren}, threshold)
 
             other ->
               other
@@ -1058,29 +1058,29 @@ defmodule ReadabilityEx.Cleaner do
     end
   end
 
-  defp clean_share_node({tag, attrs, children}, threshold) do
-    match_string = attr(attrs, "class") <> " " <> attr(attrs, "id")
+  defp clean_share_descendants({tag, attrs, children}, threshold) do
+    cleaned_children =
+      children
+      |> Enum.map(fn
+        {ctag, cattrs, cchildren} = child ->
+          match_string = attr(cattrs, "class") <> " " <> attr(cattrs, "id")
 
-    if Regex.match?(Constants.re_share_elements(), match_string) and
-         String.length(String.trim(Floki.text({tag, attrs, children}))) < threshold do
-      nil
-    else
-      cleaned_children =
-        children
-        |> Enum.map(fn
-          {ctag, cattrs, cchildren} ->
-            clean_share_node({ctag, cattrs, cchildren}, threshold)
+          if Regex.match?(Constants.re_share_elements(), match_string) and
+               String.length(Floki.text(child)) < threshold do
+            nil
+          else
+            clean_share_descendants({ctag, cattrs, cchildren}, threshold)
+          end
 
-          other ->
-            other
-        end)
-        |> Enum.reject(&is_nil/1)
+        other ->
+          other
+      end)
+      |> Enum.reject(&is_nil/1)
 
-      {tag, attrs, cleaned_children}
-    end
+    {tag, attrs, cleaned_children}
   end
 
-  defp clean_share_node(other, _threshold), do: other
+  defp clean_share_descendants(other, _threshold), do: other
 
   def remove_title_headers(node, title) do
     title = String.trim(title || "")

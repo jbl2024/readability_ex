@@ -50,11 +50,13 @@ defmodule ReadabilityEx.CleanerTest do
     assert Floki.find(cleaned, "#gallery") != []
   end
 
-  test "clean_share_elements removes low-text share nodes" do
+  test "clean_share_elements removes low-text share nodes under top candidates" do
     html = """
     <div id="root">
-      <div class="share">Share</div>
-      <div class="content">Real content</div>
+      <div id="article">
+        <div class="share">Share</div>
+        <div class="content">Real content</div>
+      </div>
     </div>
     """
 
@@ -65,6 +67,21 @@ defmodule ReadabilityEx.CleanerTest do
 
     assert Floki.find(cleaned, ".share") == []
     assert Floki.find(cleaned, ".content") != []
+  end
+
+  test "clean_share_elements does not remove top-level candidates" do
+    html = """
+    <div id="root">
+      <div class="share">Share</div>
+    </div>
+    """
+
+    cleaned =
+      html
+      |> parse_fragment()
+      |> Cleaner.clean_share_elements(500)
+
+    assert Floki.find(cleaned, ".share") != []
   end
 
   test "clean_styles drops presentational attributes and size on tables" do
