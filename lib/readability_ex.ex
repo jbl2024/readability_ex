@@ -191,7 +191,8 @@ defmodule ReadabilityEx do
       char_threshold: 500,
       base_uri: nil,
       nb_top_candidates: 5,
-      preserve_classes: MapSet.new(["page", "caption", "OPEN", "CLOSE", "ORD"])
+      preserve_classes: MapSet.new(["page", "caption", "OPEN", "CLOSE", "ORD"]),
+      keep_classes: false
     ]
 
     Keyword.merge(defaults, opts)

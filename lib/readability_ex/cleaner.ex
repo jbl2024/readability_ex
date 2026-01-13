@@ -544,6 +544,34 @@ defmodule ReadabilityEx.Cleaner do
     end)
   end
 
+  def clean_styles(node) do
+    clean_styles_node(node)
+  end
+
+  defp clean_styles_node(nil), do: nil
+
+  defp clean_styles_node({tag, attrs, children}) do
+    if String.downcase(tag) == "svg" do
+      {tag, attrs, children}
+    else
+      attrs =
+        attrs
+        |> Enum.reject(fn {k, _} -> k in presentational_attrs() end)
+        |> drop_deprecated_size_attrs(tag)
+
+      cleaned_children =
+        children
+        |> Enum.map(fn
+          {ctag, cattrs, cchildren} -> clean_styles_node({ctag, cattrs, cchildren})
+          other -> other
+        end)
+
+      {tag, attrs, cleaned_children}
+    end
+  end
+
+  defp clean_styles_node(other), do: other
+
   def mark_data_tables(root) do
     mark_node(root, false, false)
   end
@@ -1750,22 +1778,43 @@ defmodule ReadabilityEx.Cleaner do
   end
 
   defp keep_only_preserved_classes(attrs, preserve) do
-    case List.keyfind(attrs, "class", 0) do
-      {"class", v} ->
-        kept =
-          v
-          |> String.split(~r/\s+/, trim: true)
-          |> Enum.filter(&MapSet.member?(preserve, &1))
+    if is_map(preserve) or is_struct(preserve, MapSet) do
+      case List.keyfind(attrs, "class", 0) do
+        {"class", v} ->
+          kept =
+            v
+            |> String.split(~r/\s+/, trim: true)
+            |> Enum.filter(&MapSet.member?(preserve, &1))
 
-        if kept == [] do
-          List.keydelete(attrs, "class", 0)
-        else
-          List.keystore(attrs, "class", 0, {"class", Enum.join(kept, " ")})
-        end
+          if kept == [] do
+            List.keydelete(attrs, "class", 0)
+          else
+            List.keystore(attrs, "class", 0, {"class", Enum.join(kept, " ")})
+          end
 
-      _ ->
-        attrs
+        _ ->
+          attrs
+      end
+    else
+      attrs
     end
+  end
+
+  defp presentational_attrs do
+    [
+      "align",
+      "background",
+      "bgcolor",
+      "border",
+      "cellpadding",
+      "cellspacing",
+      "frame",
+      "hspace",
+      "rules",
+      "style",
+      "valign",
+      "vspace"
+    ]
   end
 
   def absolutize_uris(node, base_uri, absolute_fragments?) do

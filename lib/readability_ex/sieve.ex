@@ -42,6 +42,7 @@ defmodule ReadabilityEx.Sieve do
 
         cleaned =
           article_node
+          |> Cleaner.clean_styles()
           |> Cleaner.mark_data_tables()
           |> Cleaner.fix_lazy_images()
           |> Cleaner.remove_semantic_junk()
@@ -59,7 +60,9 @@ defmodule ReadabilityEx.Sieve do
           |> Cleaner.remove_empty_nodes()
           |> Cleaner.remove_br_before_p()
           |> Cleaner.simplify_nested_elements()
-          |> Cleaner.strip_attributes_and_classes(opts[:preserve_classes])
+          |> Cleaner.strip_attributes_and_classes(
+            if(opts[:keep_classes], do: nil, else: opts[:preserve_classes])
+          )
 
         {:ok,
          %{

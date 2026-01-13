@@ -97,8 +97,8 @@ areas, what is already aligned, and where gaps remain.
 
 - _postProcessContent (fix URIs, simplify nested, clean classes)
   - Status: Partial
-  - Notes: JS uses _cleanClasses with keepClasses toggle; Elixir strips more
-    attributes and does not support keepClasses.
+  - Notes: JS uses _cleanClasses with keepClasses toggle; Elixir still strips
+    additional attributes beyond class cleanup.
 
 - _fixRelativeUris
   - Status: Partial
@@ -112,9 +112,7 @@ areas, what is already aligned, and where gaps remain.
 ## Cleaners (prepArticle)
 
 - _cleanStyles
-  - Status: Partial
-  - Notes: JS strips styles and deprecated presentational attrs; Elixir does
-    more global class stripping.
+  - Status: Matched
 
 - _markDataTables + _getRowAndColumnCount
   - Status: Matched

@@ -66,4 +66,43 @@ defmodule ReadabilityEx.CleanerTest do
     assert Floki.find(cleaned, ".share") == []
     assert Floki.find(cleaned, ".content") != []
   end
+
+  test "clean_styles drops presentational attributes and size on tables" do
+    html = """
+    <div style="color: red" align="center">
+      <table width="100" height="200" border="1"></table>
+    </div>
+    """
+
+    cleaned = html |> parse_fragment() |> Cleaner.clean_styles()
+
+    assert Floki.find(cleaned, "div[style]") == []
+    assert Floki.find(cleaned, "div[align]") == []
+    assert Floki.find(cleaned, "table[border]") == []
+    assert Floki.find(cleaned, "table[width]") == []
+    assert Floki.find(cleaned, "table[height]") == []
+  end
+
+  test "clean_styles preserves svg attributes" do
+    html = """
+    <div>
+      <svg style="fill: red"><rect width="10" height="10"></rect></svg>
+    </div>
+    """
+
+    cleaned = html |> parse_fragment() |> Cleaner.clean_styles()
+
+    assert Floki.find(cleaned, "svg[style]") != []
+  end
+
+  test "strip_attributes_and_classes keeps classes when preserve_classes is nil" do
+    html = """
+    <div class="keep drop" style="color: red"></div>
+    """
+
+    cleaned = html |> parse_fragment() |> Cleaner.strip_attributes_and_classes(nil)
+
+    assert Floki.find(cleaned, "div[class]") != []
+    assert Floki.find(cleaned, "div[style]") == []
+  end
 end

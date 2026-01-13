@@ -90,6 +90,7 @@ Returns `{:ok, result}` or `{:error, :not_readable}`.
   scoring
 - `:preserve_classes` (default: `MapSet.new(["page", "caption", "OPEN", "CLOSE", "ORD"])`) -
   classes to keep when stripping attributes/classes
+- `:keep_classes` (default: `false`) - keep all class attributes in output HTML
 
 ## Examples
 
@@ -112,7 +113,8 @@ Customize options:
     base_uri: "https://example.com/",
     char_threshold: 200,
     nb_top_candidates: 8,
-    preserve_classes: MapSet.new(["page", "caption", "lead"])
+    preserve_classes: MapSet.new(["page", "caption", "lead"]),
+    keep_classes: false
   )
 ```
 
