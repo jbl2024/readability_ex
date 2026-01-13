@@ -74,6 +74,10 @@ defmodule ReadabilityEx.Constants do
 
   def re_share_elements(), do: ~r/(\b|_)(share|sharedaddy)(\b|_)/i
 
+  def allowed_video_re(),
+    do:
+      ~r/\/\/(www\.)?((dailymotion|youtube|youtube-nocookie|player\.vimeo|v\.qq|bilibili|live\.bilibili)\.com|(archive|upload\.wikimedia)\.org|player\.twitch\.tv)/i
+
   def lazy_src_attrs() do
     [
       "data-src",

@@ -123,9 +123,7 @@ areas, what is already aligned, and where gaps remain.
   - Status: Matched (close)
 
 - _cleanConditionally
-  - Status: Partial
-  - Notes: JS uses linkDensityModifier, figure exceptions, and embed checks that
-    are only partially mirrored.
+  - Status: Matched
 
 - _clean for object/embed/iframe/form/footer/link/aside
   - Status: Partial

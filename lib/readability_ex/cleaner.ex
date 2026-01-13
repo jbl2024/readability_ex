@@ -739,50 +739,133 @@ defmodule ReadabilityEx.Cleaner do
     |> Enum.find(&Regex.match?(Constants.urlish_image_re(), &1))
   end
 
-  def clean_conditionally({tag, attrs, children}) do
-    # Apply to subtree; keep the root container intact.
-    {tag, attrs, clean_conditionally_children(children)}
+  def clean_conditionally(node) do
+    node
+    |> clean_conditionally_tag("form")
+    |> clean_conditionally_tag("fieldset")
+    |> clean_conditionally_tag("table")
+    |> clean_conditionally_tag("ul")
+    |> clean_conditionally_tag("div")
   end
 
-  def clean_conditionally(children) when is_list(children) do
-    clean_conditionally_children(children)
+  defp clean_conditionally_tag(node, tag) do
+    clean_conditionally_tag(node, tag, %{in_code: false, in_figure: false, in_data_table: false})
   end
 
-  def clean_conditionally(other), do: other
+  defp clean_conditionally_tag({tag, attrs, children}, tag_name, ctx) do
+    tag_lower = String.downcase(tag)
+    in_code = ctx.in_code or tag_lower == "code"
+    in_figure = ctx.in_figure or tag_lower == "figure"
+    in_data_table = ctx.in_data_table or attr(attrs, "data-readability-datatable") == "1"
 
-  defp clean_conditionally_children(children) do
-    Floki.traverse_and_update(children, fn
-      {tag, attrs, children} = n when tag in ["div", "section", "ul", "ol", "table", "form"] ->
-        cond do
-          tag == "table" and data_table_attr?(attrs) ->
-            {tag, attrs, children}
+    remove? =
+      tag_lower == tag_name and
+        should_remove_conditionally?({tag_lower, attrs, children}, tag_name, %{
+          in_code: in_code,
+          in_figure: in_figure,
+          in_data_table: in_data_table
+        })
 
-          attr(attrs, "data-readability-inside-datatable") == "1" ->
-            {tag, attrs, children}
+    if remove? do
+      nil
+    else
+      cleaned_children =
+        children
+        |> Enum.map(fn
+          {ctag, cattrs, cchildren} ->
+            clean_conditionally_tag({ctag, cattrs, cchildren}, tag_name, %{
+              in_code: in_code,
+              in_figure: in_figure,
+              in_data_table: in_data_table
+            })
 
-          contains_data_table?(n) ->
-            {tag, attrs, children}
+          other ->
+            other
+        end)
+        |> Enum.reject(&is_nil/1)
 
-          tag in ["ul", "ol"] and attr(attrs, "data-readability-inside-table") == "1" ->
-            {tag, attrs, children}
+      {tag, attrs, cleaned_children}
+    end
+  end
 
-          tag in ["ul", "ol"] and should_drop_conditionally?(n) ->
-            if keep_list_candidate?(n) do
-              {tag, attrs, children}
+  defp clean_conditionally_tag(other, _tag, _ctx), do: other
+
+  defp should_remove_conditionally?({tag, attrs, _children} = node, tag_name, ctx) do
+    tag = String.downcase(tag)
+    is_list = tag in ["ul", "ol"] or list_content?(node)
+
+    cond do
+      tag_name == "table" and data_table_attr?(attrs) ->
+        false
+
+      ctx.in_data_table ->
+        false
+
+      ctx.in_code ->
+        false
+
+      contains_data_table?(node) ->
+        false
+
+      true ->
+        weight = Metrics.class_weight(attr(attrs, "class"), attr(attrs, "id"))
+        content_score = 0
+
+        if weight + content_score < 0 do
+          true
+        else
+          if char_count(node, ",") < 10 do
+            p = count_tag(node, "p")
+            img = count_tag(node, "img")
+            li = count_tag(node, "li") - 100
+            input = count_tag(node, "input")
+            heading_density = text_density(node, ["h1", "h2", "h3", "h4", "h5", "h6"])
+
+            {embed_count, allowed_embed?} = count_embeds(node)
+
+            if allowed_embed? do
+              false
             else
-              nil
+              inner_text = inner_text(node, true)
+
+              cond do
+                Regex.match?(Constants.re_ad_words(), inner_text) ->
+                  true
+
+                Regex.match?(Constants.re_loading_words(), inner_text) ->
+                  true
+
+                true ->
+                  content_length = String.length(inner_text)
+                  link_density = Metrics.link_density(node)
+                  text_density = text_density(node, textish_tags())
+                  is_figure_child = ctx.in_figure
+                  link_density_modifier = 0.0
+
+                  have_to_remove =
+                    (not is_figure_child and img > 1 and safe_ratio(p, img) < 0.5) or
+                      (not is_list and li > p) or
+                      (input > floor(p / 3)) or
+                      (not is_list and not is_figure_child and heading_density < 0.9 and
+                         content_length < 25 and (img == 0 or img > 2) and link_density > 0) or
+                      (not is_list and weight < 25 and
+                         link_density > 0.2 + link_density_modifier) or
+                      (weight >= 25 and link_density > 0.5 + link_density_modifier) or
+                      ((embed_count == 1 and content_length < 75) or embed_count > 1) or
+                      (img == 0 and text_density == 0)
+
+                  if is_list and have_to_remove do
+                    keep_list_candidate?(node, img)
+                  else
+                    have_to_remove
+                  end
+              end
             end
-
-          should_drop_conditionally?(n) ->
-            nil
-
-          true ->
-            {tag, attrs, children}
+          else
+            false
+          end
         end
-
-      other ->
-        other
-    end)
+    end
   end
 
   defp data_table_attr?(attrs) do
@@ -793,18 +876,109 @@ defmodule ReadabilityEx.Cleaner do
     Floki.find(node, "table[data-readability-datatable='1']") != []
   end
 
-  defp keep_list_candidate?(node) do
+  defp list_content?(node) do
+    inner = inner_text(node, true)
+
+    if inner == "" do
+      false
+    else
+      list_length =
+        node
+        |> Floki.find("ul,ol")
+        |> Enum.reduce(0, fn list, acc -> acc + String.length(inner_text(list, true)) end)
+
+      list_length / String.length(inner) > 0.9
+    end
+  end
+
+  defp keep_list_candidate?(node, img_count) do
     element_children = element_children(node)
 
     if Enum.any?(element_children, fn {_tag, _attrs, children} ->
          length(Enum.filter(children, &match?({_, _, _}, &1))) > 1
        end) do
-      false
+      true
     else
       li_count = node |> Floki.find("li") |> length()
-      img_count = node |> Floki.find("img") |> length()
-      img_count == li_count
+      img_count != li_count
     end
+  end
+
+  defp char_count(node, char) do
+    inner_text(node, true)
+    |> String.split(char)
+    |> length()
+    |> Kernel.-(1)
+  end
+
+  defp count_tag(node, tag) do
+    node |> Floki.find(tag) |> length()
+  end
+
+  defp text_density(node, tags) do
+    total = inner_text(node, true)
+    total_len = String.length(total)
+
+    if total_len == 0 do
+      0.0
+    else
+      child_len =
+        node
+        |> Floki.find(Enum.join(tags, ","))
+        |> Enum.reduce(0, fn child, acc ->
+          acc + String.length(inner_text(child, true))
+        end)
+
+      child_len / total_len
+    end
+  end
+
+  defp textish_tags do
+    ["span", "li", "td", "blockquote", "dl", "div", "img", "ol", "p", "pre", "table", "ul"]
+  end
+
+  defp inner_text(node, normalize_spaces) do
+    text = Floki.text(node) |> String.trim()
+
+    if normalize_spaces do
+      Regex.replace(~r/\s+/, text, " ")
+    else
+      text
+    end
+  end
+
+  defp safe_ratio(num, denom) do
+    if denom == 0 do
+      0.0
+    else
+      num / denom
+    end
+  end
+
+  defp count_embeds(node) do
+    embeds = Floki.find(node, "object,embed,iframe")
+
+    Enum.reduce(embeds, {0, false}, fn {embed_tag, embed_attrs, embed_children}, {count, allowed?} ->
+      if allowed? do
+        {count, allowed?}
+      else
+        allowed_embed? =
+          Enum.any?(embed_attrs, fn {_k, v} ->
+            Regex.match?(Constants.allowed_video_re(), v)
+          end) or
+            (String.downcase(embed_tag) == "object" and
+               Regex.match?(
+                 Constants.allowed_video_re(),
+                 Floki.raw_html({embed_tag, embed_attrs, embed_children})
+               ))
+
+        if allowed_embed? do
+          {count, true}
+        else
+          {count + 1, false}
+        end
+      end
+    end)
   end
 
   def clean_headers(node) do
@@ -1136,111 +1310,6 @@ defmodule ReadabilityEx.Cleaner do
         other
     end)
   end
-
-  defp should_drop_conditionally?(node) do
-    text = Floki.text(node) |> String.trim()
-    weight = class_weight(node)
-    content_score = content_score(node)
-
-    cond do
-      weight + content_score < 0 ->
-        true
-
-      text != "" and Regex.match?(~r/\badvertising\b/i, text) and String.length(text) < 200 and
-          ReadabilityEx.Metrics.link_density(node) > 0.2 ->
-        true
-
-      text != "" and Regex.match?(Constants.re_ad_words(), text) ->
-        true
-
-      text != "" and Regex.match?(Constants.re_loading_words(), text) ->
-        true
-
-      true ->
-        shady_metrics_drop?(node)
-    end
-  end
-
-  defp class_weight(node) do
-    {tag, attrs, _children} = node
-    class = attr(attrs, "class")
-    id_attr = attr(attrs, "id")
-
-    base =
-      case String.downcase(tag) do
-        "div" -> 5
-        "pre" -> 3
-        "td" -> 3
-        "blockquote" -> 3
-        "address" -> -3
-        "ol" -> -3
-        "ul" -> -3
-        "dl" -> -3
-        "dd" -> -3
-        "dt" -> -3
-        "li" -> -3
-        "form" -> -3
-        "h1" -> -5
-        "h2" -> -5
-        "h3" -> -5
-        "h4" -> -5
-        "h5" -> -5
-        "h6" -> -5
-        "th" -> -5
-        _ -> 0
-      end
-
-    base + ReadabilityEx.Metrics.class_weight(class, id_attr)
-  end
-
-  defp content_score(node) do
-    text = Floki.text(node)
-    comma_segments = text |> String.split(Constants.re_commas()) |> length()
-    len_bonus = min(text |> String.length() |> Kernel./(100) |> Float.floor(), 3.0)
-    1.0 + comma_segments + len_bonus
-  end
-
-  defp shady_metrics_drop?(node) do
-    # Metrics similar to spec:
-    # - heading density too high
-    # - link density high
-    # - img vs p, li vs p, etc.
-    text = Floki.text(node)
-    tlen = String.length(text)
-
-    if tlen == 0 do
-      false
-    else
-      headings_len =
-        node
-        |> Floki.find("h1,h2,h3,h4,h5,h6")
-        |> Floki.text()
-        |> String.length()
-
-      heading_ratio = headings_len / max(1, tlen)
-      link_density = ReadabilityEx.Metrics.link_density(node)
-
-      p_count = node |> Floki.find("p") |> length()
-      img_count = node |> Floki.find("img") |> length()
-      svg_count = node |> Floki.find("svg") |> length()
-      media_count = img_count + svg_count
-      li_count = node |> Floki.find("li") |> length()
-      input_count = node |> Floki.find("input") |> length()
-
-      cond do
-        heading_ratio > 0.4 -> true
-        link_density > 0.2 and tlen < 25 -> true
-        link_density > 0.5 -> true
-        p_count == 0 and media_count > 1 and tlen < 200 -> true
-        p_count > 0 and media_count / p_count > 2.0 and tlen < 1000 -> true
-        li_count > p_count and tag_name(node) not in ["ul", "ol"] and tlen < 1000 -> true
-        input_count > p_count / 3 -> true
-        true -> false
-      end
-    end
-  end
-
-  defp tag_name({tag, _attrs, _children}), do: String.downcase(tag)
 
   def simplify_nested_elements(node) do
     Floki.traverse_and_update(node, fn
