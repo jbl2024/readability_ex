@@ -1685,23 +1685,7 @@ defmodule ReadabilityEx.Cleaner do
       {tag, attrs, children} ->
         attrs =
           attrs
-          |> Enum.reject(fn {k, _} ->
-            k in [
-              "style",
-              "align",
-              "background",
-              "bgcolor",
-              "border",
-              "cellpadding",
-              "cellspacing",
-              "frame",
-              "hspace",
-              "rules",
-              "valign",
-              "vspace"
-            ] or String.starts_with?(k, "data-readability-")
-          end)
-          |> drop_deprecated_size_attrs(tag)
+          |> Enum.reject(fn {k, _} -> String.starts_with?(k, "data-readability-") end)
           |> keep_only_preserved_classes(preserve_classes)
 
         {tag, attrs, children}

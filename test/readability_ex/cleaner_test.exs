@@ -120,7 +120,21 @@ defmodule ReadabilityEx.CleanerTest do
     cleaned = html |> parse_fragment() |> Cleaner.strip_attributes_and_classes(nil)
 
     assert Floki.find(cleaned, "div[class]") != []
-    assert Floki.find(cleaned, "div[style]") == []
+    assert Floki.find(cleaned, "div[style]") != []
+  end
+
+  test "strip_attributes_and_classes removes readability data attributes and filters classes" do
+    html = """
+    <div class="page keep" data-readability-datatable="1"></div>
+    """
+
+    cleaned =
+      html
+      |> parse_fragment()
+      |> Cleaner.strip_attributes_and_classes(MapSet.new(["page"]))
+
+    assert Floki.find(cleaned, "div[data-readability-datatable]") == []
+    assert Floki.find(cleaned, "div[class='page']") != []
   end
 
   test "clean_tag keeps allowed video embeds" do

@@ -93,8 +93,7 @@ areas, what is already aligned, and where gaps remain.
 
 - _postProcessContent (fix URIs, simplify nested, clean classes)
   - Status: Partial
-  - Notes: JS uses _cleanClasses with keepClasses toggle; Elixir still strips
-    additional attributes beyond class cleanup.
+  - Notes: Class cleanup aligned; remaining gaps are in URI fixing and nested simplification.
 
 - _fixRelativeUris
   - Status: Partial
