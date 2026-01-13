@@ -1402,7 +1402,23 @@ defmodule ReadabilityEx.Cleaner do
   def simplify_nested_elements(node) do
     Floki.traverse_and_update(node, fn
       {tag, attrs, children} when tag in ["div", "section"] ->
+        id_attr = attr(attrs, "id")
+        readability_id? = id_attr != "" and String.starts_with?(id_attr, "readability")
+
         cond do
+          readability_id? ->
+            {tag, attrs, children}
+
+          not readability_id? and element_without_content?({tag, attrs, children}) ->
+            nil
+
+          not readability_id? and
+              (has_single_tag_inside_element?({tag, attrs, children}, "div") or
+                 has_single_tag_inside_element?({tag, attrs, children}, "section")) ->
+            {child_tag, child_attrs, child_children} = first_element_child({tag, attrs, children})
+            merged_attrs = merge_attrs_override(child_attrs, attrs)
+            {child_tag, merged_attrs, child_children}
+
           attr(attrs, "data-testid") == "photoviewer-children" and
               Enum.count(children, &match?({_, _, _}, &1)) == 1 ->
             Enum.find(children, &match?({_, _, _}, &1))
@@ -1493,6 +1509,26 @@ defmodule ReadabilityEx.Cleaner do
 
   defp only_whitespace_text?(_), do: false
 
+  defp element_without_content?({_, _, _} = node) do
+    text = Floki.text(node) |> String.trim()
+
+    if text != "" do
+      false
+    else
+      element_children = element_children(node)
+
+      if element_children == [] do
+        true
+      else
+        br_count = Floki.find(node, "br") |> length()
+        hr_count = Floki.find(node, "hr") |> length()
+        length(element_children) == br_count + hr_count
+      end
+    end
+  end
+
+  defp element_without_content?(_), do: false
+
   defp preserve_wrapper?(attrs) do
     id_attr = attr(attrs, "id")
     class_attr = attr(attrs, "class")
@@ -1567,6 +1603,17 @@ defmodule ReadabilityEx.Cleaner do
   defp keep_bio_wrapper?(attrs, text) do
     attr(attrs, "class") == "" and attr(attrs, "id") == "" and
       Regex.match?(~r/^[A-Z][^,]+ is a /, text)
+  end
+
+  defp merge_attrs_override(child_attrs, parent_attrs) do
+    parent_attrs
+    |> Enum.reduce(child_attrs, fn {k, v}, acc ->
+      if v != "" do
+        List.keystore(acc, k, 0, {k, v})
+      else
+        acc
+      end
+    end)
   end
 
   def flatten_tables(node) do

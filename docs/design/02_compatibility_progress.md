@@ -100,7 +100,7 @@ areas, what is already aligned, and where gaps remain.
 
 - _simplifyNestedElements
   - Status: Partial
-  - Notes: Elixir includes extra site-specific logic.
+  - Notes: Core unwrap/removal aligned; Elixir still includes extra site-specific logic.
 
 ## Cleaners (prepArticle)
 
