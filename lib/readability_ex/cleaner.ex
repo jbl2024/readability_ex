@@ -749,10 +749,15 @@ defmodule ReadabilityEx.Cleaner do
   end
 
   defp clean_conditionally_tag(node, tag) do
-    clean_conditionally_tag(node, tag, %{in_code: false, in_figure: false, in_data_table: false})
+    clean_conditionally_tag(
+      node,
+      tag,
+      %{in_code: false, in_figure: false, in_data_table: false},
+      true
+    )
   end
 
-  defp clean_conditionally_tag({tag, attrs, children}, tag_name, ctx) do
+  defp clean_conditionally_tag({tag, attrs, children}, tag_name, ctx, is_root?) do
     tag_lower = String.downcase(tag)
     in_code = ctx.in_code or tag_lower == "code"
     in_figure = ctx.in_figure or tag_lower == "figure"
@@ -760,6 +765,7 @@ defmodule ReadabilityEx.Cleaner do
 
     remove? =
       tag_lower == tag_name and
+        not is_root? and
         should_remove_conditionally?({tag_lower, attrs, children}, tag_name, %{
           in_code: in_code,
           in_figure: in_figure,
@@ -773,11 +779,16 @@ defmodule ReadabilityEx.Cleaner do
         children
         |> Enum.map(fn
           {ctag, cattrs, cchildren} ->
-            clean_conditionally_tag({ctag, cattrs, cchildren}, tag_name, %{
-              in_code: in_code,
-              in_figure: in_figure,
-              in_data_table: in_data_table
-            })
+            clean_conditionally_tag(
+              {ctag, cattrs, cchildren},
+              tag_name,
+              %{
+                in_code: in_code,
+                in_figure: in_figure,
+                in_data_table: in_data_table
+              },
+              false
+            )
 
           other ->
             other
@@ -788,7 +799,7 @@ defmodule ReadabilityEx.Cleaner do
     end
   end
 
-  defp clean_conditionally_tag(other, _tag, _ctx), do: other
+  defp clean_conditionally_tag(other, _tag, _ctx, _is_root?), do: other
 
   defp should_remove_conditionally?({tag, attrs, _children} = node, tag_name, ctx) do
     tag = String.downcase(tag)
@@ -1020,25 +1031,25 @@ defmodule ReadabilityEx.Cleaner do
   end
 
   defp clean_share_node({tag, attrs, children}, threshold) do
-    cleaned_children =
-      children
-      |> Enum.map(fn
-        {ctag, cattrs, cchildren} = child ->
-          match_string = attr(cattrs, "class") <> " " <> attr(cattrs, "id")
+    match_string = attr(attrs, "class") <> " " <> attr(attrs, "id")
 
-          if Regex.match?(Constants.re_share_elements(), match_string) and
-               String.length(String.trim(Floki.text(child))) < threshold do
-            nil
-          else
+    if Regex.match?(Constants.re_share_elements(), match_string) and
+         String.length(String.trim(Floki.text({tag, attrs, children}))) < threshold do
+      nil
+    else
+      cleaned_children =
+        children
+        |> Enum.map(fn
+          {ctag, cattrs, cchildren} ->
             clean_share_node({ctag, cattrs, cchildren}, threshold)
-          end
 
-        other ->
-          other
-      end)
-      |> Enum.reject(&is_nil/1)
+          other ->
+            other
+        end)
+        |> Enum.reject(&is_nil/1)
 
-    {tag, attrs, cleaned_children}
+      {tag, attrs, cleaned_children}
+    end
   end
 
   defp clean_share_node(other, _threshold), do: other
