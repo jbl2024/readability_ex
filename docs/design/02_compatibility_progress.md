@@ -160,7 +160,7 @@ areas, what is already aligned, and where gaps remain.
 ## Paging / Multi-page
 
 - _findNextPageLink / _getNextPage / _appendNextPage
-  - Status: Missing
+  - Status: Matched
 
 ## High-impact Gaps (likely to affect fixtures)
 

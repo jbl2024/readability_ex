@@ -91,6 +91,8 @@ Returns `{:ok, result}` or `{:error, :not_readable}`.
 - `:preserve_classes` (default: `MapSet.new(["page", "caption", "OPEN", "CLOSE", "ORD"])`) -
   classes to keep when stripping attributes/classes
 - `:keep_classes` (default: `false`) - keep all class attributes in output HTML
+- `:page_fetcher` (default: `nil`) - function to fetch next-page HTML for paging
+- `:max_pages` (default: `1`) - maximum number of additional pages to append
 
 ## Examples
 
@@ -114,7 +116,9 @@ Customize options:
     char_threshold: 200,
     nb_top_candidates: 8,
     preserve_classes: MapSet.new(["page", "caption", "lead"]),
-    keep_classes: false
+    keep_classes: false,
+    page_fetcher: nil,
+    max_pages: 1
   )
 ```
 

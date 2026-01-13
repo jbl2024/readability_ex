@@ -74,6 +74,9 @@ defmodule ReadabilityEx.Constants do
 
   def re_share_elements(), do: ~r/(\b|_)(share|sharedaddy)(\b|_)/i
 
+  def re_next_link(), do: ~r/(next|weiter|continue|>([^\|]|$)|»([^\|]|$))/i
+  def re_prev_link(), do: ~r/(prev|earl|old|new|<|«)/i
+
   def allowed_video_re(),
     do:
       ~r/\/\/(www\.)?((dailymotion|youtube|youtube-nocookie|player\.vimeo|v\.qq|bilibili|live\.bilibili)\.com|(archive|upload\.wikimedia)\.org|player\.twitch\.tv)/i

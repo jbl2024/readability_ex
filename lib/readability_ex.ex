@@ -11,7 +11,7 @@ defmodule ReadabilityEx do
   - Conditional cleaning + post processing
   """
 
-  alias ReadabilityEx.{Cleaner, Constants, Index, Metadata, Sieve, Title}
+  alias ReadabilityEx.{Cleaner, Constants, Index, Metadata, Paging, Sieve, Title}
 
   @spec parse(binary(), keyword() | map()) :: {:ok, map()} | {:error, atom()}
   def parse(html, opts \\ []) do
@@ -76,8 +76,12 @@ defmodule ReadabilityEx do
       end
 
     case best do
-      nil -> {:error, :not_readable}
-      result -> {:ok, Map.delete(result, :_pass_ok)}
+      nil ->
+        {:error, :not_readable}
+
+      result ->
+        paged = Paging.append_next_pages(result, doc, base_uri, opts)
+        {:ok, Map.delete(paged, :_pass_ok)}
     end
   end
 
@@ -192,7 +196,9 @@ defmodule ReadabilityEx do
       base_uri: nil,
       nb_top_candidates: 5,
       preserve_classes: MapSet.new(["page", "caption", "OPEN", "CLOSE", "ORD"]),
-      keep_classes: false
+      keep_classes: false,
+      page_fetcher: nil,
+      max_pages: 1
     ]
 
     Keyword.merge(defaults, opts)
