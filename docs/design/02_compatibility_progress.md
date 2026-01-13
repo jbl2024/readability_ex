@@ -86,8 +86,7 @@ areas, what is already aligned, and where gaps remain.
 ## Sibling Joining
 
 - Sibling threshold + bonus + paragraph heuristics
-  - Status: Partial
-  - Notes: Close to JS, with extra sibling inclusion for lists/separators/media-only paragraphs.
+  - Status: Matched
 
 ## Post-processing
 

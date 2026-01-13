@@ -365,7 +365,7 @@ defmodule ReadabilityEx.Sieve do
       node ->
         parent = node.parent_id && state[node.parent_id]
 
-        if parent && parent.tag != "body" and parent_has_byline_child?(parent, state) do
+        if not is_nil(parent) and parent.tag != "body" and parent_has_byline_child?(parent, state) do
           parent.id
         else
           top_id
@@ -422,10 +422,8 @@ defmodule ReadabilityEx.Sieve do
     else
       kept =
         siblings
-        |> Enum.map(fn sib -> {sib, keep_sibling?(sib, top_id, top, threshold)} end)
-        |> keep_separator_siblings()
-        |> Enum.filter(fn {_sib, keep?} -> keep? end)
-        |> Enum.map(fn {sib, _} ->
+        |> Enum.filter(fn sib -> keep_sibling?(sib, top_id, top, threshold) end)
+        |> Enum.map(fn sib ->
           if alter_to_div?(sib.tag) do
             set_node_tag(sib.raw, "div")
           else
@@ -458,7 +456,7 @@ defmodule ReadabilityEx.Sieve do
   end
 
   defp alter_to_div?(tag) do
-    tag not in ["div", "article", "section", "p", "ol", "ul", "blockquote", "hr", "b", "strong"]
+    tag not in ["div", "article", "section", "p", "ol", "ul"]
   end
 
   defp keep_sibling?(sib, top_id, top, threshold) do
@@ -476,68 +474,18 @@ defmodule ReadabilityEx.Sieve do
       sib.is_candidate and sib.score + content_bonus >= threshold ->
         true
 
-      Regex.match?(Constants.re_byline(), (sib.class || "") <> " " <> (sib.id_attr || "")) and
-          String.length(sib.text || "") > 0 ->
-        true
-
-      same_class?(sib, top) and String.length(sib.text || "") > 0 and
-          (sib.link_density || 0.0) < 0.3 ->
-        true
-
-      sib.tag in ["p", "ul", "ol"] and String.length(sib.text || "") > 80 and
+      sib.tag == "p" and String.length(sib.text || "") > 80 and
           (sib.link_density || 0.0) < 0.25 ->
         true
 
-      sib.tag in ["p", "ul", "ol"] and String.length(sib.text || "") < 80 and
+      sib.tag == "p" and String.length(sib.text || "") < 80 and
         String.length(sib.text || "") > 0 and (sib.link_density || 0.0) == 0.0 and
           String.match?(sib.text || "", ~r/[\.\?!]( |$)/) ->
-        true
-
-      sib.tag == "p" and String.length(sib.text || "") == 0 and has_media?(sib.raw) ->
-        true
-
-      sib.tag in ["b", "strong"] and String.length(sib.text || "") > 0 ->
-        true
-
-      sib.tag == "blockquote" and String.length(sib.text || "") > 0 ->
-        true
-
-      sib.tag == "hr" ->
         true
 
       true ->
         false
     end
-  end
-
-  defp keep_separator_siblings(siblings_with_flags) do
-    case Enum.find_index(siblings_with_flags, fn {_sib, keep?} -> keep? end) do
-      nil ->
-        siblings_with_flags
-
-      first_idx ->
-        last_idx =
-          siblings_with_flags
-          |> Enum.with_index()
-          |> Enum.reduce(first_idx, fn {{_sib, keep?}, idx}, acc ->
-            if keep?, do: idx, else: acc
-          end)
-
-        siblings_with_flags
-        |> Enum.with_index()
-        |> Enum.map(fn {{sib, keep?}, idx} ->
-          if keep? or
-               (idx >= first_idx and idx <= last_idx and sib.tag in ["hr", "b", "strong"]) do
-            {sib, true}
-          else
-            {sib, false}
-          end
-        end)
-    end
-  end
-
-  defp has_media?(node) do
-    Floki.find(node, "img,embed,object,iframe") != []
   end
 
   defp set_node_tag({_tag, attrs, children}, new_tag) do
