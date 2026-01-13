@@ -96,9 +96,7 @@ areas, what is already aligned, and where gaps remain.
   - Notes: Class cleanup aligned; remaining gaps are in URI fixing and nested simplification.
 
 - _fixRelativeUris
-  - Status: Partial
-  - Notes: JS keeps hash links when base == document; Elixir uses an option and
-    may differ.
+  - Status: Matched
 
 - _simplifyNestedElements
   - Status: Partial

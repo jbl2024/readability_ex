@@ -1860,9 +1860,9 @@ defmodule ReadabilityEx.Cleaner do
         {tag, attrs, children} ->
           attrs =
             attrs
-            |> abs_attr("href", base, absolute_fragments?, tag)
-            |> abs_attr("src", base, true, tag)
-            |> abs_attr("poster", base, true, tag)
+            |> abs_attr("href", base, absolute_fragments?)
+            |> abs_attr("src", base, true)
+            |> abs_attr("poster", base, true)
             |> abs_srcset(base)
 
           {tag, attrs, children}
@@ -1873,13 +1873,10 @@ defmodule ReadabilityEx.Cleaner do
     end
   end
 
-  defp abs_attr(attrs, k, base, absolute_fragments?, tag) do
+  defp abs_attr(attrs, k, base, absolute_fragments?) do
     case List.keyfind(attrs, k, 0) do
       {^k, v} when is_binary(v) and v != "" ->
         cond do
-          k == "src" and tag == "iframe" and String.starts_with?(v, "//") ->
-            attrs
-
           should_absolutize?(k, v, absolute_fragments?) ->
             List.keystore(attrs, k, 0, {k, to_abs(v, base)})
 
