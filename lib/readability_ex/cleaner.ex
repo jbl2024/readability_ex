@@ -128,11 +128,12 @@ defmodule ReadabilityEx.Cleaner do
   end
 
   def remove_scripts(doc) do
-    Floki.filter_out(doc, "script, style, link[rel='preload'][as='script'], noscript")
+    Floki.filter_out(doc, "script, noscript")
   end
 
   def prep_document(doc) do
     doc
+    |> remove_head_styles()
     |> remove_comments()
     |> normalize_text_nodes()
     |> replace_font_tags()
@@ -140,6 +141,22 @@ defmodule ReadabilityEx.Cleaner do
     |> remove_redundant_brs()
     |> convert_divs_to_paragraphs()
     |> fix_lazy_images()
+  end
+
+  defp remove_head_styles(doc) do
+    Floki.traverse_and_update(doc, fn
+      {"head", attrs, children} ->
+        cleaned =
+          Enum.reject(children, fn
+            {"style", _, _} -> true
+            _ -> false
+          end)
+
+        {"head", attrs, cleaned}
+
+      other ->
+        other
+    end)
   end
 
   defp replace_font_tags(doc) do
@@ -356,12 +373,13 @@ defmodule ReadabilityEx.Cleaner do
   defp replace_brbr_with_p(doc) do
     # Convert sequences of <br><br> into <p> blocks, preserving block-level children.
     Floki.traverse_and_update(doc, fn
-      {tag, attrs, children} when tag in ["div", "section", "article"] ->
-        if has_p_children?(children) or not has_double_br?(children) do
-          {tag, attrs, children}
-        else
+      {tag, attrs, children} ->
+        if has_double_br?(children) do
           new_children = br_children_to_paragraphs(children)
-          {tag, attrs, new_children}
+          new_tag = if tag == "p" and has_p_children?(new_children), do: "div", else: tag
+          {new_tag, attrs, new_children}
+        else
+          {tag, attrs, children}
         end
 
       other ->

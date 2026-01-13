@@ -22,14 +22,11 @@ areas, what is already aligned, and where gaps remain.
   - Status: Matched (behaviorally close)
 
 - _removeScripts
-  - Status: Partial
-  - Notes: JS removes script + noscript; Elixir removes extra tags and can
-    differ on edge cases.
+  - Status: Matched
 
 - _prepDocument (style tags, BR replacement, font->span)
   - Status: Partial
-  - Notes: BR replacement aligned; style removal differs (JS removes style tags
-    only in head).
+  - Notes: Style removal matches (head only); BR replacement still diverges in edge cases.
 
 - _replaceBrs
   - Status: Matched (gated on double-BR)
