@@ -248,7 +248,9 @@ defmodule ReadabilityEx.Cleaner do
 
         cond do
           (single_p_child = single_p_child(children)) && Metrics.link_density(node) < 0.25 ->
-            single_p_child
+            {_, child_attrs, child_children} = single_p_child
+            merged_attrs = merge_attrs(child_attrs, attrs)
+            {"p", merged_attrs, child_children}
 
           single_heading_child?(children) ->
             {"p", attrs, children}

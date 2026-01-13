@@ -84,7 +84,7 @@ defmodule ReadabilityEx do
   defp run_attempt(state, doc, meta, title, base_uri, absolute_fragments?, flags, opts) do
     char_threshold = opts[:char_threshold]
 
-    case Sieve.grab_article(state, doc, flags, base_uri, absolute_fragments?, title, opts) do
+    case Sieve.grab_article(state, doc, flags, base_uri, absolute_fragments?, title, opts, meta) do
       {:ok, grab} ->
         text = grab.text
         best_ok = String.length(text) >= char_threshold

@@ -56,8 +56,7 @@ areas, what is already aligned, and where gaps remain.
 ## Byline
 
 - _isValidByline + remove/record
-  - Status: Partial
-  - Notes: JS prefers [itemprop="name"] under author nodes; Elixir does not yet.
+  - Status: Matched
 
 ## Scoring / Candidates
 

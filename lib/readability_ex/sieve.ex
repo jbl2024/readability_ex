@@ -10,10 +10,11 @@ defmodule ReadabilityEx.Sieve do
           binary(),
           boolean(),
           binary(),
-          keyword()
+          keyword(),
+          map()
         ) ::
           {:ok, map()} | {:error, atom()}
-  def grab_article(state, _doc, flags, base_uri, absolute_fragments?, article_title, opts) do
+  def grab_article(state, _doc, flags, base_uri, absolute_fragments?, article_title, opts, meta) do
     state =
       state
       |> drop_hidden()
@@ -22,7 +23,7 @@ defmodule ReadabilityEx.Sieve do
       |> maybe_strip_unlikely(flags)
       |> drop_empty_containers()
 
-    {state, byline} = drop_bylines(state)
+    {state, byline} = drop_bylines(state, meta)
     state = drop_title_duplicates(state, article_title)
 
     state = score_candidates(state, flags)
@@ -675,7 +676,15 @@ defmodule ReadabilityEx.Sieve do
     |> Enum.any?(&String.contains?(&1, "author"))
   end
 
-  defp attr(attrs, k), do: (List.keyfind(attrs, k, 0) || {k, ""}) |> elem(1)
+  defp attr(attrs, k) do
+    Enum.find_value(attrs, "", fn {key, value} ->
+      cond do
+        key == k -> value
+        is_atom(key) and Atom.to_string(key) == k -> value
+        true -> nil
+      end
+    end)
+  end
 
   defp class_weight(node, flags) do
     if Constants.has_flag?(flags, Constants.flag_weight_classes()) do
@@ -831,41 +840,70 @@ defmodule ReadabilityEx.Sieve do
     end)
   end
 
-  defp drop_bylines(state) do
+  defp drop_bylines(state, meta) do
+    if byline_present?(meta) do
+      {state, nil}
+    else
     root_id = find_root_id(state)
 
+    nodes_in_order =
+      case root_id do
+        nil -> Map.values(state)
+        _ -> collect_nodes_in_order(root_id, state)
+      end
+
     candidates =
-      root_id
-      |> collect_nodes_in_order(state)
+      nodes_in_order
       |> Enum.filter(&valid_byline_node?/1)
 
     chosen =
       candidates
-      |> Enum.filter(fn n -> byline_prefix?(normalize_byline_text(n.text || "")) end)
+      |> Enum.filter(fn n ->
+        text = n.raw |> Floki.text() |> normalize_byline_text()
+        byline_prefix?(text)
+      end)
       |> List.first()
       |> case do
         nil -> List.first(candidates)
         node -> node
       end
 
-    if is_nil(chosen) do
-      {state, nil}
-    else
-      byline = normalize_byline_text(chosen.text || "")
+      if is_nil(chosen) do
+        {state, nil}
+      else
+        byline =
+          chosen.raw
+          |> find_itemprop_name()
+          |> case do
+            nil -> chosen.raw |> Floki.text()
+            text -> text
+          end
+          |> normalize_byline_text()
 
-      state =
-        Enum.reject(state, fn {id, _n} -> id == chosen.id end)
-        |> Map.new()
+        state =
+          Enum.reject(state, fn {id, _n} -> id == chosen.id end)
+          |> Map.new()
 
-      {state, byline}
+        {state, byline}
+      end
     end
   end
+
+  defp byline_present?(%{byline: byline}) when is_binary(byline) do
+    String.trim(byline) != ""
+  end
+
+  defp byline_present?(_), do: false
 
   defp valid_byline_node?(n) do
     match_string = (n.class || "") <> " " <> (n.id_attr || "")
     rel = attr(n.attrs, "rel") |> String.downcase()
     itemprop = attr(n.attrs, "itemprop") |> String.downcase()
-    byline_length = String.length(String.trim(n.text || ""))
+    byline_length =
+      n.raw
+      |> Floki.text()
+      |> String.trim()
+      |> String.length()
 
     (rel == "author" or
        String.contains?(itemprop, "author") or
@@ -878,6 +916,30 @@ defmodule ReadabilityEx.Sieve do
     |> String.trim()
     |> String.replace(~r/\s*[\-–—]+$/, "")
     |> String.trim()
+  end
+
+  defp find_itemprop_name(raw) do
+    case Floki.find(raw, "[itemprop]") do
+      [] ->
+        nil
+
+      nodes ->
+        nodes
+        |> Enum.find_value(fn node ->
+          itemprop =
+            node
+            |> Floki.attribute("itemprop")
+            |> List.first()
+            |> to_string()
+
+          if String.contains?(String.downcase(itemprop), "name") do
+            text = Floki.text(node) |> String.trim()
+            if text == "", do: nil, else: text
+          else
+            nil
+          end
+        end)
+    end
   end
 
   defp byline_prefix?(text) do
