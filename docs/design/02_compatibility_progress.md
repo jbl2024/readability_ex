@@ -160,9 +160,7 @@ areas, what is already aligned, and where gaps remain.
   - Status: Matched
 
 - _getArticleMetadata (meta tag rules)
-  - Status: Partial
-  - Notes: JS supports more tag patterns (weibo, parsely, etc.) and URL filtering
-    for article:author is handled differently.
+  - Status: Matched
 
 - _unescapeHtmlEntities
   - Status: Matched

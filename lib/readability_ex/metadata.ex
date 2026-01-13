@@ -25,21 +25,50 @@ defmodule ReadabilityEx.Metadata do
                   "APIReference"
                 ])
 
+  @property_pattern ~r/\s*(article|dc|dcterm|og|twitter)\s*:\s*(author|creator|description|published_time|title|site_name)\s*/i
+  @name_pattern ~r/^\s*(?:(dc|dcterm|og|twitter|parsely|weibo:(article|webpage))\s*[-\.:]\s*)?(author|creator|pub-date|description|title|site_name)\s*$/i
+
   def extract(doc, raw_html) do
     article_title = Title.get_article_title(doc, %{title: ""}, [])
     jsonld = get_jsonld(raw_html, article_title)
-    meta = get_meta(doc)
+    values = get_meta_values(doc)
 
     %{
-      title: jsonld[:title] || meta[:title],
-      excerpt: jsonld[:excerpt] || meta[:description],
+      title:
+        jsonld[:title] ||
+          values["dc:title"] ||
+          values["dcterm:title"] ||
+          values["og:title"] ||
+          values["weibo:article:title"] ||
+          values["weibo:webpage:title"] ||
+          values["title"] ||
+          values["twitter:title"] ||
+          values["parsely-title"] ||
+          article_title,
+      excerpt:
+        jsonld[:excerpt] ||
+          values["dc:description"] ||
+          values["dcterm:description"] ||
+          values["og:description"] ||
+          values["weibo:article:description"] ||
+          values["weibo:webpage:description"] ||
+          values["description"] ||
+          values["twitter:description"],
       byline:
-        normalize_byl(meta[:byl]) ||
-          normalize_author(meta[:author]) || normalize_author(jsonld[:author]),
-      site_name: normalize_site_name(jsonld[:site_name] || meta[:site_name]),
-      lang: meta[:lang],
-      published_time: jsonld[:published_time] || meta[:published_time],
-      dir: meta[:dir]
+        jsonld[:byline] ||
+          values["dc:creator"] ||
+          values["dcterm:creator"] ||
+          values["author"] ||
+          values["parsely-author"] ||
+          article_author(values["article:author"]),
+      site_name: jsonld[:site_name] || values["og:site_name"],
+      lang: html_attr(doc, "lang"),
+      published_time:
+        jsonld[:published_time] ||
+          values["article:published_time"] ||
+          values["parsely-pub-date"] ||
+          nil,
+      dir: html_attr(doc, "dir")
     }
     |> unescape_metadata_entities()
   end
@@ -64,79 +93,65 @@ defmodule ReadabilityEx.Metadata do
     end
   end
 
-  defp get_meta(doc) do
-    %{
-      byl: meta_content(doc, ["byl"]),
-      title:
-        meta_content(doc, [
-          "dc:title",
-          "DC.title",
-          "dcterms.title",
-          "DCTERMS.title",
-          "parsely-title",
-          "og:title",
-          "twitter:title",
-          "title"
-        ]),
-      description:
-        meta_content(doc, [
-          "dc:description",
-          "DC.description",
-          "dcterms.description",
-          "DCTERMS.description",
-          "og:description",
-          "twitter:description",
-          "description"
-        ]),
-      author:
-        meta_content(doc, [
-          "dc:creator",
-          "DC.creator",
-          "dcterms.creator",
-          "DCTERMS.creator",
-          "author",
-          "parsely-author",
-          "article:author"
-        ]),
-      site_name: meta_content(doc, ["og:site_name"]),
-      published_time:
-        meta_content(doc, [
-          "article:published_time",
-          "og:published_time",
-          "parsely-pub-date"
-        ]),
-      lang: Floki.attribute(doc, "html", "lang") |> List.first() |> blank_to_nil(),
-      dir: Floki.attribute(doc, "html", "dir") |> List.first() |> blank_to_nil()
-    }
-  end
+  defp get_meta_values(doc) do
+    doc
+    |> Floki.find("meta")
+    |> Enum.reduce(%{}, fn meta, values ->
+      content =
+        meta
+        |> Floki.attribute("content")
+        |> List.first()
 
-  defp meta_content(doc, keys) do
-    metas = Floki.find(doc, "meta")
+      if is_nil(content) or content == "" do
+        values
+      else
+        content = content |> String.trim() |> blank_to_nil()
+        property = meta |> Floki.attribute("property") |> List.first()
+        name = meta |> Floki.attribute("name") |> List.first()
 
-    Enum.find_value(keys, fn key ->
-      Enum.find_value(metas, fn meta ->
-        attrs =
-          Floki.attribute(meta, "property") ++
-            Floki.attribute(meta, "name") ++ Floki.attribute(meta, "itemprop")
-
-        content = meta |> Floki.attribute("content") |> List.first() |> blank_to_nil()
-
-        if content && Enum.any?(attrs, &meta_key_match?(&1, key)) do
-          content
+        if is_nil(content) do
+          values
         else
-          nil
+          case property_match(property) do
+            {:ok, matched} ->
+              Map.put(values, matched, content)
+
+            :error ->
+              if name_match?(name) do
+                normalized = normalize_meta_name(name)
+                Map.put(values, normalized, content)
+              else
+                values
+              end
+          end
         end
-      end)
+      end
     end)
   end
 
-  defp meta_key_match?(attr, key) do
-    key = String.downcase(key)
+  defp property_match(nil), do: :error
 
-    attr
+  defp property_match(property) do
+    case Regex.run(@property_pattern, property) do
+      [match | _] ->
+        {:ok, match |> String.downcase() |> String.replace(~r/\s+/, "")}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp name_match?(nil), do: false
+
+  defp name_match?(name) do
+    Regex.match?(@name_pattern, name)
+  end
+
+  defp normalize_meta_name(name) do
+    name
     |> String.downcase()
-    |> String.split(~r/\s+/, trim: true)
-    |> Enum.any?(&(&1 == key))
+    |> String.replace(~r/\s+/, "")
+    |> String.replace(".", ":")
   end
 
   defp get_jsonld(raw_html, article_title) do
@@ -149,9 +164,16 @@ defmodule ReadabilityEx.Metadata do
       |> Enum.map(fn [_, body] -> body end)
 
     blocks
-    |> Enum.map(&decode_jsonld(&1, article_title))
-    |> Enum.reject(&is_nil/1)
-    |> pick_best_jsonld()
+    |> Enum.reduce_while(nil, fn body, _acc ->
+      case decode_jsonld(body, article_title) do
+        nil -> {:cont, nil}
+        jsonld -> {:halt, jsonld}
+      end
+    end)
+    |> case do
+      nil -> %{}
+      jsonld -> jsonld
+    end
   end
 
   defp decode_jsonld(body, article_title) do
@@ -195,8 +217,8 @@ defmodule ReadabilityEx.Metadata do
       if map && jsonld_article_type?(map) do
         %{
           title: jsonld_title(map["name"], map["headline"], article_title),
-          author: extract_author(map["author"]),
-          published_time: (map["datePublished"] || map["dateCreated"]) |> blank_to_nil(),
+          byline: extract_author(map["author"]),
+          published_time: map["datePublished"] |> blank_to_nil(),
           excerpt: map["description"] |> blank_to_nil(),
           site_name: publisher_name(map["publisher"])
         }
@@ -221,13 +243,6 @@ defmodule ReadabilityEx.Metadata do
 
   defp extract_author(n) when is_binary(n), do: blank_to_nil(n)
   defp extract_author(_), do: nil
-
-  defp pick_best_jsonld([]), do: %{}
-  defp pick_best_jsonld([one]), do: one
-
-  defp pick_best_jsonld(list) do
-    Enum.find(list, &(&1[:title] && &1[:published_time])) || hd(list)
-  end
 
   defp jsonld_article_type?(%{"@type" => type}), do: jsonld_article_type?(type)
 
@@ -366,87 +381,34 @@ defmodule ReadabilityEx.Metadata do
     if s == "", do: nil, else: s
   end
 
-  defp normalize_author(nil), do: nil
+  defp article_author(nil), do: nil
 
-  defp normalize_author(author) when is_binary(author) do
-    trimmed = String.trim(author)
+  defp article_author(author) when is_binary(author) do
+    author = String.trim(author)
 
-    if Regex.match?(~r/^\w+:\/\//, trimmed) do
+    if url?(author) do
       nil
     else
-      blank_to_nil(trimmed)
+      blank_to_nil(author)
     end
   end
 
-  defp normalize_byl(nil), do: nil
+  defp article_author(_), do: nil
 
-  defp normalize_byl(byl) when is_binary(byl) do
-    byl =
-      byl
-      |> String.trim()
-      |> then(&Regex.replace(~r/^by\s+/i, &1, ""))
-      |> String.trim()
+  defp url?(nil), do: false
 
-    byl =
-      if all_caps_name?(byl) do
-        titlecase(byl)
-      else
-        byl
-      end
-
-    blank_to_nil(byl)
-  end
-
-  defp all_caps_name?(text) do
-    letters = Regex.scan(~r/\p{L}+/u, text) |> List.flatten()
-    letters != [] and Enum.all?(letters, fn part -> part == String.upcase(part) end)
-  end
-
-  defp titlecase(text) do
-    text
-    |> String.split(~r/\s+/, trim: true)
-    |> Enum.map(&titlecase_word/1)
-    |> Enum.join(" ")
-  end
-
-  defp titlecase_word(word) do
-    word
-    |> String.split("-", trim: true)
-    |> Enum.map(fn part -> part |> String.downcase() |> String.capitalize() end)
-    |> Enum.join("-")
-  end
-
-  defp normalize_site_name(nil), do: nil
-
-  defp normalize_site_name(name) when is_binary(name) do
-    name = String.trim(name)
-
-    if name == "" do
-      nil
-    else
-      if Regex.match?(~r/\s[|\-»:–—]\s|[|\-»:–—]/, name) do
-        left =
-          name
-          |> String.replace(~r/\s*[|\-»:–—]\s*.+$/, "")
-          |> String.trim()
-
-        right =
-          name
-          |> String.replace(~r/^.+?\s*[|\-»:–—]\s*/, "")
-          |> String.trim()
-
-        if Regex.match?(~r/^by\b/i, right) do
-          name
-        else
-          if String.contains?(left, ".") do
-            left
-          else
-            name
-          end
-        end
-      else
-        name
-      end
+  defp url?(value) when is_binary(value) do
+    case URI.parse(value) do
+      %URI{scheme: nil} -> false
+      %URI{scheme: scheme, host: nil} when scheme in ["http", "https"] -> false
+      _ -> true
     end
+  end
+
+  defp html_attr(doc, attr) do
+    doc
+    |> Floki.attribute("html", attr)
+    |> List.first()
+    |> blank_to_nil()
   end
 end
