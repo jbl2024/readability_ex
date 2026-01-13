@@ -122,4 +122,28 @@ defmodule ReadabilityEx.CleanerTest do
     assert Floki.find(cleaned, "div[class]") != []
     assert Floki.find(cleaned, "div[style]") == []
   end
+
+  test "clean_tag keeps allowed video embeds" do
+    html = """
+    <div>
+      <iframe src="https://player.vimeo.com/video/123"></iframe>
+    </div>
+    """
+
+    cleaned = html |> parse_fragment() |> Cleaner.clean_tag("iframe")
+
+    assert Floki.find(cleaned, "iframe") != []
+  end
+
+  test "clean_tag removes disallowed embeds" do
+    html = """
+    <div>
+      <iframe src="https://example.com/video"></iframe>
+    </div>
+    """
+
+    cleaned = html |> parse_fragment() |> Cleaner.clean_tag("iframe")
+
+    assert Floki.find(cleaned, "iframe") == []
+  end
 end

@@ -124,8 +124,7 @@ areas, what is already aligned, and where gaps remain.
   - Status: Matched
 
 - _clean for object/embed/iframe/form/footer/link/aside
-  - Status: Partial
-  - Notes: Elixir includes extra site-specific removal rules.
+  - Status: Matched
 
 - _cleanMatchedNodes (share elements)
   - Status: Matched

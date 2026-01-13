@@ -1149,10 +1149,6 @@ defmodule ReadabilityEx.Cleaner do
 
   def remove_semantic_junk(node) do
     Floki.traverse_and_update(node, fn
-      {tag, _attrs, _children}
-      when tag in ["nav", "footer", "aside", "form", "object", "embed"] ->
-        nil
-
       {"div", attrs, children} ->
         id_attr = attr(attrs, "id")
 
@@ -1168,6 +1164,39 @@ defmodule ReadabilityEx.Cleaner do
       other ->
         other
     end)
+  end
+
+  def clean_tag(node, tag) when is_binary(tag) do
+    target = String.downcase(tag)
+    embed_tag? = target in ["object", "embed", "iframe"]
+
+    Floki.traverse_and_update(node, fn
+      {tag_name, attrs, children} = element ->
+        if String.downcase(tag_name) == target do
+          if embed_tag? and allowed_video?(tag_name, attrs, children) do
+            element
+          else
+            nil
+          end
+        else
+          element
+        end
+
+      other ->
+        other
+    end)
+  end
+
+  defp allowed_video?(tag, attrs, children) do
+    allowed? =
+      Enum.any?(attrs, fn {_k, v} -> Regex.match?(Constants.allowed_video_re(), v) end)
+
+    if allowed? do
+      true
+    else
+      String.downcase(tag) == "object" and
+        Regex.match?(Constants.allowed_video_re(), Floki.raw_html({tag, attrs, children}))
+    end
   end
 
   def remove_byline_nodes(node) do
